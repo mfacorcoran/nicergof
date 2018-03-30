@@ -56,3 +56,5 @@ docs/_build/
 # mac DS_Store
 .DS_Store
 
+# jedit backup files
+*~
