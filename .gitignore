@@ -49,12 +49,16 @@ coverage.xml
 # Sphinx documentation
 docs/_build/
 
-# jupyter notebook stuff
+# pycharm stuff
 .idea/
+
+# jupyter notebook stuff
 .ipynb_checkpoints/
 
 # mac DS_Store
-.DS_Store
+*.DS_Store
 
 # jedit backup files
-*~
+.*~
+*.*~
+*.*#
