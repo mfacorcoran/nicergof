@@ -24,7 +24,7 @@ NICER data processing and analysis is mainly done using the `nicer` software sub
 
 and the following methods:
 
-* get_eventfile(): return the name of the events file
+* get_eventfile(): return the name of the events FITS file
 * get_eventsdf(): get the events list as a pandas DataFrame
 * get_prod(): returns a list of data products (in development)
 * get_hk(): returns a list of housekeeping files (in development)
