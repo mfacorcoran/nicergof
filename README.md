@@ -8,7 +8,7 @@ NICER data are stored at the [High Energy Astrophysics Science Archive Research 
 
 NICER data processing and analysis is mainly done using the `nicer` software sub-package distributed with the [`HEASoft`](https://heasarc.gsfc.nasa.gov/docs/software/lheasoft/) data analysis software package.
 
-## The nicer.py python software
+## The nicer.py Python Package
 
 `nicer.py` is a python package to help access and analyze processed nicer data.  Data access and analysis is done by creating a `nicerObs` observation object.
 
