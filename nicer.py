@@ -45,20 +45,25 @@ class nicerObs(object):
 
         """
         rootdir = rootdir.strip()
-        if type(obsid)==str:
-            self.obsid=obsid.strip()
-            self.datadir = os.path.join(rootdir, obsid.strip())
-            self.log = os.path.join(self.datadir, 'log')
-            self.aux = os.path.join(self.datadir, 'auxil')
-            self.xti = os.path.join(self.datadir, 'xti')
-        elif type(obsid)== list:
-            self.datadir = [os.path.join(rootdir, obs.strip()) for obs in obsid]
-            self.log = [os.path.join(datadir, 'log') for datadir in self.datadir]
-            self.aux = [os.path.join(datadir, 'auxil') for datadir in self.datadir]
-            self.xti = [os.path.join(datadir, 'xti') for datadir in self.datadir]
+        if type(obsid) != str:
+            obsid = str(int(obsid)).strip()
         else:
-            print "type of obsid must be either str or list; returning"
-            return
+            obsid = obsid.strip()
+        self.datadir = os.path.join(rootdir, obsid)
+        xtidir = os.path.join(self.datadir, 'xti')
+        # Check that obsid directory exists
+        if not os.path.exists(xtidir):
+            print("{xtidir} Not Found; returning".format(xtidir=xtidir))
+            return None
+        self.xti = xtidir
+        self.log = os.path.join(self.datadir, 'log')
+        self.aux = os.path.join(self.datadir, 'auxil')
+        # TODO: ALLOW LIST OF OBSIDS
+        # elif type(obsid)== list:
+        #     self.datadir = [os.path.join(rootdir, obs.strip()) for obs in obsid]
+        #     self.log = [os.path.join(datadir, 'log') for datadir in self.datadir]
+        #     self.aux = [os.path.join(datadir, 'auxil') for datadir in self.datadir]
+        #     self.xti = [os.path.join(datadir, 'xti') for datadir in self.datadir]
         if type(rmffile) == str:
             self.rmffile = rmffile
         elif type(rmffile) == list:
