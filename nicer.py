@@ -118,7 +118,8 @@ class nicerObs(object):
         :param evttype: type of event file ('cl' = use cleaned events, 'uf' = use uncleaned events, 'ufa' = use unfiltered, calibrated events)
         :param eventflag: value of event flag for filtering (24 for fast+slow events; None to not filter on event flag)
         :param mpu: if "uf" or "ufa", mpu should be an integer between 0-6 to specify which mpu is desired (default = 0)
-        :param
+        :param chanmin: minimum pi channel of selected events or None
+        :param chanmax: maximum pi channel of selected events or None
         :return:
         """
         try:
@@ -403,15 +404,19 @@ class nicerObs(object):
                     'Binning':binning, 'TSTART':tstart, 'TSTOP':tstop}
         return specdict
 
-    def get_detector_rates(self, evttype='cl',mpu=0):
+
+    def get_detector_rates(self, evttype='cl',mpu=0, chanmin=30, chanmax=12000):
         """
         returns a dataframe of the counts, poissonian errors of the counts, and rates, per detector
         :param evttype: Type of event (cleaned, uf, ufa; cleaned by default)
         :param mpu: number of mpu if uf or ufa chosen
+        :param chanmin: minimum pi channel of selected events
+        :param chanmax: maximum pi channel of selected events
         :return: detector data frame with detector id as the index, along with counts and rates
         """
-        evtdf = self.get_eventsdf(evttype='cl', eventflag=24, mpu=0, chanmin=None, chanmax=None,
+        evtdf = self.get_eventsdf(evttype='cl', eventflag=24, mpu=0, chanmin=chanmin, chanmax=chanmax,
                      det_id=None)
+
         if type(evtdf) != int:
             counts_by_detector = pd.DataFrame(evtdf['DET_ID'].groupby(evtdf['DET_ID']).describe()['count'])
             counts_by_detector['sigma'] = np.sqrt(counts_by_detector['count'])
@@ -425,12 +430,15 @@ class nicerObs(object):
             print "Could not find event file for {0}".format(self.obsid)
             return -1
 
+
     def append_obs(self, nicerObs):
         """
         append a nicer obs to a nicer obs, and return the combined event list and gtis
         :param nicerObs: nicer observation to append
         :return: combined event
         """
+        pass
+
 
 def filter_flag(eventfile, mask = 'xxx11000', flagcolumn = 'EVENT_FLAGS'):
     """
@@ -453,6 +461,7 @@ def filter_flag(eventfile, mask = 'xxx11000', flagcolumn = 'EVENT_FLAGS'):
         em = sum(np.byte(marray[ind]) == np.byte(ef[ind])) == num_nonx #accept if all the non-x elements match
         eventmask.append(em)
     return eventmask
+
 
 def parse_nicer_flag(filter_flag):
     """
