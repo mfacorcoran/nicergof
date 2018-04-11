@@ -74,31 +74,30 @@ class nicerObs(object):
             self.arffile = [a for a in arffile]
 
 
-    def get_eventfile(self, evttype='cl', mpu=0, evtfile=None):
+    def get_eventfile(self, evttype='cl', mpu=7, evtfile=None):
         """
         return the name of the events file
-        :param type: either "cl" for cleaned events, "ufa" for calibrated unfiltered,
-        or "uf" for unfiltered
         :param evttype: "cl" for cleaned events, "ufa" for unfiltered calibrated events, "uf" for unfiltered, uncalibrated events
-        :param mpu: if "uf", mpu should be an integer between 0-6 to specify which mpu is desired (default = 0)
+        :param mpu: mpu should be an integer between 0-6 to specify an individual mpu or 7 for the merged data (default = 7)
+        :return: name of the event file
         """
         if not evtfile:
             evttype = evttype.strip()
             if evttype == "cl":
                 evdir = os.path.join(self.xti,"event_cl")
                 try:
-                    evtfile = glob.glob(os.path.join(evdir,"*cl.evt*"))[0]
+                    evtfile = glob.glob(os.path.join(evdir,"*mpu{0}_cl.evt*".format(mpu)))[-1]
                 except:
                     print "Did not find any cleaned event files in {0}".format(evdir)
                     evtfile = ''
                 return evtfile
             if evttype == "ufa":
                 evdir = os.path.join(self.xti,"event_cl")
-                evtfile = glob.glob(os.path.join(evdir,"*ufa.evt"))[0]
+                evtfile = glob.glob(os.path.join(evdir,"*mpu{0}_ufa.evt*".format(mpu)))[-1]
                 return evtfile
             if evttype == "uf":
                 evdir=os.path.join(self.xti,"event_uf")
-                evtfile = glob.glob(os.path.join(evdir,"*uf.evt"))
+                evtfile = glob.glob(os.path.join(evdir,"*uf.evt*"))
                 # return the unfiltered event file for the specified mpu
                 evtfile = [x for x in evtfile if 'mpu{0}'.format(mpu) in x]
                 try:
@@ -111,34 +110,46 @@ class nicerObs(object):
                 print "evttype must be either cl, ufa, or uf, not {0}".format(evttype)
 
 
-    def get_eventsdf(self, evttype='cl', eventflag=24, mpu=0, chanmin=None, chanmax=None,
+    def get_eventsdf(self, evttype='cl', mpu=7, flagtype=None, chanmin=None, chanmax=None,
                      det_id = None):
         """
         returns the events as a pandas dataframe
-        :param evttype: type of event file ('cl' = use cleaned events, 'uf' = use uncleaned events, 'ufa' = use unfiltered, calibrated events)
-        :param eventflag: value of event flag for filtering (24 for fast+slow events; None to not filter on event flag)
+        :param evttype: type of event file ('cl' = use cleaned events, 'uf' = use uncleaned events,
+        'ufa' = use unfiltered, calibrated events)
+        :param flagtype: value of event flag for filtering; either 'undershoot', 'overshoot','software', 'fast',
+        'slow', 's+f', '1mpu' or None"
         :param mpu: if "uf" or "ufa", mpu should be an integer between 0-6 to specify which mpu is desired (default = 0)
         :param chanmin: minimum pi channel of selected events or None
         :param chanmax: maximum pi channel of selected events or None
         :return:
         """
+        efile = self.get_eventfile(mpu=mpu, evttype=evttype)
         try:
-            evt = fits.open(self.get_eventfile(mpu=mpu, evttype=evttype))['EVENTS'].data
+            evttab = Table.read(efile,'EVENTS')
         except ValueError:
             # if eventfile name not found
-            print("Event File  not  found for {0}; returning".format(self.datadir))
+            print("Problem reading {0}; returning".format(efile))
             return -1
-        eflag=self.get_event_flags(evttype=evttype,mpu=mpu)
-        evttab = Table(evt)
-        # note: astropy.Table can't handle vector columns like EVENT_FLAGS, so remove it and add
-        # back the scalar column calculated above
+        # eflag=self.get_event_flags(evttype=evttype,mpu=mpu)
+        # create an events flag column as a string of 1's and 0's
+        # kludge using astropy.table since pandas can't handle array columns
+        # remove the event flag column from the astropy table then
+        # add it back as a string of 1''s and 0's
+
+        # TODO - make flags integers then use bitwise operator & to do the flag comparison
+        # see https://www.tutorialspoint.com/python/bitwise_operators_example.htm
+
+        eflags = self.get_event_flags(evttype=evttype, mpu=mpu)
+
         evttab.remove_column('EVENT_FLAGS')
         evtdf = evttab.to_pandas()
         # Add back in the event flags as a scalar
-        evtdf['EVENT_FLAGS'] = eflag
+        evtdf['EVENT_FLAGS'] = eflags
         # if eventflag defined, filter on eventflag
-        if eventflag:
-            evtdf = evtdf[evtdf.EVENT_FLAGS == eventflag]
+
+        # TODO: Finish event flagging
+        if flagtype != None:
+            evtdf = filter_flag(evtdf, flagtype)
         if chanmin:
             # include only events with PI channel greater than chanmin
             evtdf = evtdf[(evtdf.PI >= chanmin)]
@@ -167,7 +178,7 @@ class nicerObs(object):
         return hkfiles
 
 
-    def get_gti(self, evttype='cl', mpu=0):
+    def get_gti(self, evttype='cl', mpu=7):
         """
         gets the gti for the cleaned events as a pandas dataframe
         """
@@ -193,19 +204,31 @@ class nicerObs(object):
         return gtidf
 
 
-    def get_event_flags(self, evttype='cl', mpu=0):
+    def get_event_flags(self, evttype='cl', mpu=7):
         """
         gets the event flag bit values as a numpy array of integers.
         event flag of 24 = 2**3 + 2**4 (a 1 in bit 3 and 4) corresponds to
         events detected by both the fast and slow chains (i.e. the "best" events)
+
+        Valid X-ray events are those detected in the slow chain (i.e. a bit flag of xxx1x000)
 
         Notes
         1) NICER currently uses 6-bit event flags; the event file however
         has the bit array = 8 bits, since FITS requires a bit array to have an integer number of bytes
         This means that the two highest order (two leftmost) bits are unused
 
+        2) the meaning of the bit flags:
+            bit 0 (xxxxxxx1 ==  1): "undershoot" reset
+            bit 1 (xxxxxx1x ==  2): "overshoot" reset
+            bit 2 (xxxxx1xx ==  4): software sample
+            bit 3 (xxxx1xxx ==  8): fast signal chain triggered
+            bit 4 (xxx1xxxx == 16): slow signal chain triggered
+            bit 5 (xx1xxxxx == 32): first event in MPU packet
+            bit 6 (x1xxxxxx): unused
+            bit 7 (1xxxxxxx): unused
+
         :param evttype: type of event (by default use cleaned events)
-        :param mpu: Number of  MPU (default is to use the merged data, mpu=0)
+        :param mpu: Number of  MPU (default is to use the merged data, mpu=7)
         :return:
         """
         efile = self.get_eventfile(evttype, mpu=mpu)
@@ -214,7 +237,7 @@ class nicerObs(object):
         return np.asarray(event_flags)
 
 
-    def get_event_times(self, evttype="cl", eventflag=24, mpu=0):
+    def get_event_times(self, evttype="cl", flagtype="slow", mpu=7):
         """
         get the event times from the specified event file
         :return:
@@ -231,7 +254,7 @@ class nicerObs(object):
         return times
 
 
-    def get_lc(self, binwidth, evttype='cl', eventflag=24, mpu=0, det_id = None,
+    def get_lc(self, binwidth, evttype='cl', flagtype="slow", mpu=7, det_id = None,
                chanmin = None, chanmax=None, verbose=False, gtinum=None, evtdf = None):
         """
         return the binned lightcurve (bincounts, bincenters and binwidths)
@@ -252,7 +275,7 @@ class nicerObs(object):
         """
         evttype = evttype.strip()
         if evtdf is None:
-            evtdf = self.get_eventsdf(evttype=evttype, mpu=mpu, eventflag=eventflag, det_id=det_id)
+            evtdf = self.get_eventsdf(evttype=evttype, mpu=mpu, flagtype=flagtype, det_id=det_id)
         gti = self.get_gti()
         if chanmin:
             # include only events with PI channel greater than chanmin
@@ -302,14 +325,14 @@ class nicerObs(object):
                 binwidths.extend(bwidths)
         return np.asarray(bincnts), np.asarray(bincen), np.asarray(binwidths)
 
-    def fold(self,evttype, period, tstart=0.0, tstop=0.0, epoch=0.0, nbins=100, eventflag=24, mpu=0):
+    def fold(self,evttype, period, tstart=0.0, tstop=0.0, epoch=0.0, nbins=100, flagtype="slow", mpu=7):
         """
         return a phase-folded lightcurve
         :param period: period on which to fold
         :param epoch: zero-point of the calculated phase
         :return: lc, phase where 0<phase<1 is the fraction of the period relative to epoch
         """
-        time = self.get_event_times(evttype=evttype,eventflag=eventflag,mpu=mpu)
+        time = self.get_event_times(evttype=evttype,flagtype=flagtype,mpu=mpu)
         if tstop > tstart:
             ind = np.where((time >= tstart) & (time <= tstop))
             time = time[ind[0]]
@@ -320,11 +343,11 @@ class nicerObs(object):
         phicen = binphi[:-1] + binhalfwidth
         return bincnts,phicen
 
-    def get_spectrum(self, evttype='cl', mpu=0, binning=1,
+    def get_spectrum(self, evttype='cl', mpu=7, binning=1,
                      tstart=None,
                      tstop=None,
                      chantype="PI",
-                     eventflag=24):
+                     flagtype="slow"):
         """
         calculate the binned spectrum optionally between tstart and tstart
         :param evttype:
@@ -368,6 +391,8 @@ class nicerObs(object):
         # HISTORY (the cards in the template; new history cards should be added)
         # SEQPNUM =                    1 / Number of times the dataset processed
         #
+        #
+        # TODO: add good time intervals as Extension 2
         rmffile = self.rmffile
         if not os.path.isfile(rmffile):
             print "nicerObs RMF file {0} should exist but doesn't; returning".format(rmffile)
@@ -376,7 +401,7 @@ class nicerObs(object):
         if not os.path.isfile(rmffile):
             print "nicerObs ARF file {0} should exist but doesn't; returning".format(arffile)
             return
-        evtdf = self.get_eventsdf(evttype=evttype, mpu=mpu)
+        evtdf = self.get_eventsdf(evttype=evttype, mpu=mpu, flagtype=flagtype)
         if not tstart:
             tstart = min(evtdf.TIME)
         if not tstop:
@@ -405,7 +430,7 @@ class nicerObs(object):
         return specdict
 
 
-    def get_detector_rates(self, evttype='cl',mpu=0, chanmin=30, chanmax=12000):
+    def get_detector_rates(self, evttype='cl',mpu=7, chanmin=30, chanmax=12000, flagtype='slow'):
         """
         returns a dataframe of the counts, poissonian errors of the counts, and rates, per detector
         :param evttype: Type of event (cleaned, uf, ufa; cleaned by default)
@@ -414,7 +439,7 @@ class nicerObs(object):
         :param chanmax: maximum pi channel of selected events
         :return: detector data frame with detector id as the index, along with counts and rates
         """
-        evtdf = self.get_eventsdf(evttype='cl', eventflag=24, mpu=0, chanmin=chanmin, chanmax=chanmax,
+        evtdf = self.get_eventsdf(evttype='cl', flagtype=flagtype, mpu=mpu, chanmin=chanmin, chanmax=chanmax,
                      det_id=None)
 
         if type(evtdf) != int:
@@ -440,27 +465,60 @@ class nicerObs(object):
         pass
 
 
-def filter_flag(eventfile, mask = 'xxx11000', flagcolumn = 'EVENT_FLAGS'):
+def filter_flag(eventDF, flagtype='slow'):
     """
-    Filter an event list based on the EVENT_FLAGS
-    :param eventfile: name of event file
-    :param mask: an 8-character string of the form where the characters can be either 1, 0 or x (ignore this bit); default is to accept fast+slow events (which are the best NICER events)
-    :return:
+    Filter an NICER event dataframe based on the EVENT_FLAGS
+
+    :param eventDF: NICER events dataframe
+    :param flagtype: type of flagging to be done.  Valid values are:
+            'undershoot': (xxxxxxx1 ==  1) undershoot reset
+            'overshoot':  (xxxxxx1x ==  2) overshoot reset
+            'software':   (xxxxx1xx ==  4) software sample
+            'fast':       (xxxx1000 ==  8) Valid fast trigger
+            'slow':       (xxx1x000 == 16) Valid slow trigger
+            's+f':        (xxx1x000 == 24) valid fast+slow trigger event
+            '1mpu':       (xx1xxxxx == 32) first event in MPU packet
+
+    :return: returns the event dataframe including only the types of events specified
     """
-    events = fits.open(eventfile)[1].data
-    # e-flags is returned as a boolean array for each event
-    eflags = events[flagcolumn]
-    # expand mask string to a byte array
-    marray = np.asarray([x for x in mask.strip()])
-    # ignore any 'x'
-    ind = np.where(marray != 'x')[0]
-    # if the all the non-'x' event flags match the mask values, then the event is accepted
-    num_nonx = len(ind)
-    eventmask = []
-    for ef in eflags:
-        em = sum(np.byte(marray[ind]) == np.byte(ef[ind])) == num_nonx #accept if all the non-x elements match
-        eventmask.append(em)
-    return eventmask
+    f = flagtype.strip().lower()
+    if flagtype != None:
+        if f == 'undershoot':
+            # this flags any event with bit 0 set
+            evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 1) == 1]
+        elif f == 'overshoot':
+            # this flags any event with bit 1 set
+            evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 2) == 2]
+        elif f == 'software':
+            # this flags any event with bit 2 set
+            evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 4) == 4]
+        elif f == 'fast':
+            # this flags any event with bit 3 set and bit 0, 1, 2 not set
+            evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 8) == 8]
+            evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 1) == 0]
+            evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 2) == 0]
+            evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 4) == 0]
+        elif f == 'slow':
+            # this flags any event with bit 4 set
+            evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 16) == 16]
+            evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 1) == 0]
+            evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 2) == 0]
+            evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 4) == 0]
+        elif f == '1mpu':
+            # this flags any event with bit 5 set
+            evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 32) == 32]
+        elif f == 's+f':
+            # this flags fast+slow triggers
+            evtDFfilt = eventDF[eventDF.EVENT_FLAGS == 24]
+            evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 1) == 0]
+            evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 2) == 0]
+            evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 4) == 0]
+        else:
+            print("flagtype must be either 'undershoot', 'overshoot','software', 'fast', 'slow', 's+f', or '1mpu'")
+            return
+        return evtDFfilt
+    else:
+        return eventDF
 
 
 def parse_nicer_flag(filter_flag):
@@ -497,7 +555,7 @@ def parse_nicer_flag(filter_flag):
         print ("  {d} {stat}".format(d=d, stat=status))
 
 
-def plot_gti_lc(obsid, rootdir, event_flag=24, binwidth=2, ymax=30, save=False,
+def plot_gti_lc(obsid, rootdir, flagtype="slow", binwidth=2, ymax=30, save=False,
                 chanmin=None, chanmax=None,
                 figdir='/Users/corcoran/research/WR140/NICER/plots',
                 figsize=[15, 4]):
@@ -524,7 +582,7 @@ def plot_gti_lc(obsid, rootdir, event_flag=24, binwidth=2, ymax=30, save=False,
         else:
             titl = obsid
         plt.title(titl)
-        ctsbin, bincen, binwidths = nobs.get_lc(gtinum=i, binwidth=binwidth, eventflag=event_flag, chanmin=chanmin,
+        ctsbin, bincen, binwidths = nobs.get_lc(gtinum=i, binwidth=binwidth, flagtype=flagtype, chanmin=chanmin,
                                                 chanmax=chanmax)
         plt.step(bincen - gti['START'][i], ctsbin / binwidth)
         if save:
@@ -912,4 +970,7 @@ if __name__ == '__main__':
     # print bincts
     #
     ##### test_filter_flag()
-    test_lc_detid(10)
+    #test_lc_detid(10)
+
+    nobs = nicerObs('1120010136', rootdir='/Volumes/SXDC/Data/NICER/wr140')
+    eventDF = nobs.get_eventsdf(flagtype='slow')
