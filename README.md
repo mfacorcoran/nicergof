@@ -53,7 +53,7 @@ Assume that your NICER observation directory is in `$HOME/nicerdata`, and there'
 To create a nicerObs obsid object, you would:
 
 ```
-ipython> from nicer.nicer import nicerOBS
+ipython> from nicer.nicer import nicerObs
 ipython> import os
 ipython> home = os.environ['HOME']
 ipython> datadir = os.path.join(home,'nicerdata')
