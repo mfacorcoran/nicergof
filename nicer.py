@@ -9,16 +9,6 @@ import pandas as pd
 import numpy as np
 
 
-#TODO: NEED to change the event flagging (filtering on an equality is not sufficient since sometimes you might not care what the value of a flag is)
-#A better approach:
-#  a) nicerObs should define the information about a NICER observation (path, rmf, arf) - each obs should have its own
-# object isinstance
-# b) a method should return the events list as a pandas dataframe (with eventflags as a scalar)
-# c) we should have a function to filter the events file on event flags - for example filter
-# on event type: fast+slow events, fast events, slow events, resests, etc.
-# lightcurves and spectra should be defined from the filtered events dataframe
-
-
 
 class nicerObs(object):
     """
@@ -58,7 +48,7 @@ class nicerObs(object):
         self.xti = xtidir
         self.log = os.path.join(self.datadir, 'log')
         self.aux = os.path.join(self.datadir, 'auxil')
-        # TODO: ALLOW LIST OF OBSIDS
+        # TODO: ALLOW LIST OF OBSIDS (BETTER APPROACH: each nicerObs instance should refer to only one OBSID; multiple OBSIDS could be summarized as a list or dictionary of nicerObs instances)
         # elif type(obsid)== list:
         #     self.datadir = [os.path.join(rootdir, obs.strip()) for obs in obsid]
         #     self.log = [os.path.join(datadir, 'log') for datadir in self.datadir]
@@ -136,9 +126,6 @@ class nicerObs(object):
         # remove the event flag column from the astropy table then
         # add it back as a string of 1''s and 0's
 
-        # TODO - make flags integers then use bitwise operator & to do the flag comparison
-        # see https://www.tutorialspoint.com/python/bitwise_operators_example.htm
-
         eflags = self.get_event_flags(evttype=evttype, mpu=mpu)
 
         evttab.remove_column('EVENT_FLAGS')
@@ -147,7 +134,6 @@ class nicerObs(object):
         evtdf['EVENT_FLAGS'] = eflags
         # if eventflag defined, filter on eventflag
 
-        # TODO: Finish event flagging
         if flagtype != None:
             evtdf = filter_flag(evtdf, flagtype)
         if chanmin:
@@ -422,12 +408,32 @@ class nicerObs(object):
         effarea_interp = np.interp(chan_nrg, effarea.ENERG_LO, effarea.SPECRESP)
         # chanbins are the edges of the channel bins starting at 1
         chanbins = np.arange(1, 1500, binning)
-        specpi, chans = np.histogram(evtDF[chantype], bins=chanbins)
+        if evttype=="cl":
+            specpi, chans = np.histogram(evtDF[chantype], bins=chanbins)
+        else:
+            # need to strip NaNs from any chantype values before binning
+            specpi, chans = np.histogram(evtDF[~np.isnan(evtDF[chantype])][chantype], bins=chanbins)
         # get the edges of the energy bins corresponding to chanbins
         nrgbins = np.interp(chanbins, ebounds.CHANNEL, chan_nrg)
         specdict = {'Counts':specpi, 'Energy':nrgbins[:-1], 'Channels':chanbins[:-1],
                     'Binning':binning, 'TSTART':tstart, 'TSTOP':tstop}
         return specdict
+
+
+    def get_bkg_spectrum(self, evttype='cl', mpu=7, binning=1,
+                     tstart=None,
+                     tstop=None,
+                     chantype="PI",
+                     flagtype="slow"):
+        """
+        This uses Ron Remillard's prescription for constructing a background spectrum based on
+            IBG = trumpet-selected count rate for 52-FPMs at 15-17 keV
+            HREJ = hatchet-rejected count rate at 2.7-12 keV
+        and template spectra based on the BKG_RXTE fields (selected for a range of [IBG, HREJ])
+        :return: a spectrum dictionary of the background spectrum.
+        TODO: implement method from "Using the NICER Bkg Model.ipynb"; note that the bkg spectrum must be constructed on a per-GTI basis, and taking into account any user-specified start/stop time, event flag selection, mpu selection (might need to create unmerged ufa files), detector selection
+        """
+        pass
 
 
     def get_detector_rates(self, evttype='cl',mpu=7, chanmin=30, chanmax=12000, flagtype='slow'):
@@ -492,13 +498,13 @@ def filter_flag(eventDF, flagtype='slow'):
         elif f == 'software':
             # this flags any event with bit 2 set
             evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 4) == 4]
-        elif f == 'fast':
+        elif f == 'fast' or f == 'f':
             # this flags any event with bit 3 set and bit 0, 1, 2 not set
             evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 8) == 8]
             evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 1) == 0]
             evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 2) == 0]
             evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 4) == 0]
-        elif f == 'slow':
+        elif f == 'slow' or f == 's':
             # this flags any event with bit 4 set
             evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 16) == 16]
             evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 1) == 0]
@@ -507,7 +513,7 @@ def filter_flag(eventDF, flagtype='slow'):
         elif f == '1mpu':
             # this flags any event with bit 5 set
             evtDFfilt = eventDF[(eventDF.EVENT_FLAGS & 32) == 32]
-        elif f == 's+f':
+        elif f == 's+f' or f == 'slow+fast':
             # this flags fast+slow triggers
             evtDFfilt = eventDF[eventDF.EVENT_FLAGS == 24]
             evtDFfilt = evtDFfilt[(evtDFfilt.EVENT_FLAGS & 1) == 0]
