@@ -394,9 +394,8 @@ class nicerObs(object):
             tstop = max(evtdf.TIME)
         evtDF = evtdf[(evtdf.TIME >= tstart) & ((evtdf.TIME <= tstop))]
         #
-        # get gain from RMF file
-        #
         # get channels and energy boundaries from the rmf file
+        #
         rmf = fits.open(rmffile)
         ebounds = rmf['EBOUNDS'].data
         DE = ebounds.E_MAX - ebounds.E_MIN
@@ -420,20 +419,59 @@ class nicerObs(object):
         return specdict
 
 
-    def get_bkg_spectrum(self, evttype='cl', mpu=7, binning=1,
-                     tstart=None,
-                     tstop=None,
-                     chantype="PI",
-                     flagtype="slow"):
+    def get_bkg_spectrum(self, chantype="PI", ModelType = "2A", tstart=None, tstop = None, gtinum=0,
+                         bkg_lib_dir="/Volumes/SXDC/Google_Drive/David_Espinoza/nicer_bkg_model/bkg_library"):
         """
         This uses Ron Remillard's prescription for constructing a background spectrum based on
             IBG = trumpet-selected count rate for 52-FPMs at 15-17 keV
             HREJ = hatchet-rejected count rate at 2.7-12 keV
         and template spectra based on the BKG_RXTE fields (selected for a range of [IBG, HREJ])
         :return: a spectrum dictionary of the background spectrum.
-        TODO: implement method from "Using the NICER Bkg Model.ipynb"; note that the bkg spectrum must be constructed on a per-GTI basis, and taking into account any user-specified start/stop time, event flag selection, mpu selection (might need to create unmerged ufa files), detector selection
+        TODO: take into account any user-specified start/stop time, event flag selection, mpu selection (might need to create unmerged ufa files), detector selection
+        TODO: some issues to consider with bg calculation: should we restrict it to a single gti or allow the user to specify tstart, tstop (need to specify both tstart and tstop)
+
+        :param chantype: type of spectral channel to use for the spectrum
+        :param ModelType: either 2A or 2B for Model2A or Model2B, respectively
+        :param tstart: start time to calculate background.  Generally (tstart, tstop) should delineate a single good time interval
+        :param tstop: stop time to calculate background
+        :param gtinum: if tstart or tstop not specified use the start, stop times for GTI number gtinum
+        :param bkg_lib_dir: directory path where the background library files are kept
         """
-        pass
+        slowevt = filter_flag(self.get_eventsdf(evttype='ufa'),flagtype='slow')
+        # filter for start and stop of the gti
+        gtidf = self.get_gti()
+        if gtinum > max(gtidf.index):
+            print ("GTINum = {0}; GTINum must be <= {1}").format(gtinum, max(gtidf.index))
+            return
+        if not tstart:
+            tstart = gtidf['START'][gtinum]
+        if not tstop:
+            tstop = gtidf['STOP'][gtinum]
+        #slowevt = slowevt[(slowevt.TIME >= gtidf['START'][gtinum]) & (slowevt.TIME <= gtidf['STOP'][gtinum])]
+        slowevt = slowevt[(slowevt.TIME >= tstart) & (slowevt.TIME <= tstop)]
+        # hatchet rejection
+        hrejevt = slowevt[(np.isnan(slowevt.PI_FAST)) | (slowevt.PI_RATIO < 1.4)]
+        hrejlc = self.get_lc(20, evtdf=hrejevt, chanmin=270, chanmax=1200)
+        hrej = (np.asarray(hrejlc[0]) / np.asarray(hrejlc[2])).mean()
+        # Trumpet selection
+        tselevt = slowevt[(np.isnan(slowevt.PI_RATIO)) | (slowevt.PI_RATIO < (1.1 + 120 / slowevt.PI))]
+        tselcts, tseltime, tselbin = self.get_lc(100., evtdf=tselevt, chanmin=1500, chanmax=1700)
+        tsel_rate = np.asarray(tselcts) / np.asarray(tselbin)
+        if len(tsel_rate) == 0:
+            IBG = 0.0
+        else:
+            IBG = tsel_rate.mean()
+        # select bkg group file
+        bgtab, ibgtab, hrejtab,bgexpo = bgroup_lookup(IBG, hrej, bkg_lib_dir=bkg_lib_dir)
+        exposure = tstop - tstart
+        scale = IBG / ibgtab * exposure / bgexpo
+        hdu = fits.open(bgtab)
+        bgspec = hdu[1].data
+        bgspecdict = {'Counts':bgspec['COUNTS']*scale, 'Channels':bgspec['CHANNEL'],
+                    'TSTART':gtidf.START[gtinum], 'TSTOP':gtidf.STOP[gtinum], 'Scale':scale}
+        return bgspecdict
+
+
 
 
     def get_detector_rates(self, evttype='cl',mpu=7, chanmin=30, chanmax=12000, flagtype='slow'):
@@ -671,9 +709,11 @@ def get_obsid_specparams(obsid, model=None, get_errors = True,
                          arffile='/Users/corcoran/Dropbox/nicer_cal/ni_xrcall_onaxis_v0.06.arf',
                          workdir="/Users/corcoran/research/WR140/NICER/work/",
                          datadir="/Volumes/SXDC/Data/NICER/wr140",
-                         fluxband="2.0 10.0", statMethod="cstat",
+                         fluxband="2.0 10.0",
+                         statMethod="cstat",
                          ignore = "0.0-0.45, 7.5.0-**",
                          interval=None,
+                         writexcm=True, xcmroot=None,
                          chatter=False
                          ):
     """Get spectrum parameters from fit
@@ -726,6 +766,11 @@ def get_obsid_specparams(obsid, model=None, get_errors = True,
 
         xspec.Fit.statMethod = statMethod
         xspec.Fit.perform()
+        if writexcm:
+            if not xcmroot:
+                xcmroot = os.path.join(workdir, str(obsid), phaname.replace('.pha',''))
+            xu.write_xcm(xcmroot, pha, model=model)
+
         xspec.AllModels.calcFlux(fluxband)
 
         flux = pha.flux[0]
@@ -885,6 +930,57 @@ def fit_spectrum(obsid, pha, model, writexcm=True,
         print "Can't fit OBSID {obs}".format(obs=obsid)
     return pha, model
 
+
+def bgroup_lookup(IBG, HREJ, bkg_lib_dir='bkg_library', verbose=True, ModelType="A"):
+    """
+    uses Ron Remillard's background library and parameterization table
+    :param IBG: Value of 12-17 keV rate from the observation
+    :param HREJ: Value of "hatchet-rejected" rate from observation
+    :param bkg_lib_dir: directory in which bg_groups table is found
+    :param verbose: if True increase verbosity
+    :param ron: if True
+    :return:
+    """
+    if ModelType.strip().upper() == "A":
+        bgtable = os.path.join(bkg_lib_dir, 'bg_groups.table')
+        try:
+            bgtable = pd.read_csv(bgtable, names=('bg_group', 'IBG', 'HREJ'), sep ='\s+')
+        except IOError, errmsg:
+            print "Problem reading {0} ({1}); Returning".format(bgtable, errmsg)
+            return
+        bglookupfile = os.path.join(bkg_lib_dir, 'bkg_library_bounds.xlsx')
+        try:
+            bglookup = pd.read_excel(bglookupfile)
+        except IOError, errmsg:
+            print "Problem reading {0} ({1}); Returning".format(bglookup, errmsg)
+            return
+        ibgDF = bglookup[(IBG >= bglookup.IBGmin) & (IBG < bglookup.IBGmax)]
+        group = ibgDF[(HREJ >= ibgDF.HREJmin) & (HREJ < ibgDF.HREJmax)]['Group'].iloc[0]
+        if (group == 14) or (group == 15):
+            group = 13
+        if (group == 24) or (group == 25):
+            group = 23
+        if (group == 31):
+            group = 32
+        if (group == 34) or (group == 35):
+            group = 33
+        if (group == 41):
+            group = 42
+        if (group == 44) or (group == 45):
+            group = 43
+        if (group == 51):
+            group = 52
+        if (group == 61):
+            group = 62
+        groupname = "bg_group_{group}.pha".format(group=group)
+        hrej = bgtable[bgtable['bg_group'] == groupname]['HREJ'].iloc[0]
+        ibg = bgtable[bgtable['bg_group'] == groupname]['IBG'].iloc[0]
+        group_phafile = os.path.join(bkg_lib_dir, groupname)
+        # get exposure time for bg pha file
+        exposure = fits.open(group_phafile)[1].header['EXPOSURE']
+    return group_phafile, ibg, hrej, exposure
+
+
 ########################
 # TESTS
 ########################
@@ -979,4 +1075,6 @@ if __name__ == '__main__':
     #test_lc_detid(10)
 
     nobs = nicerObs('1120010136', rootdir='/Volumes/SXDC/Data/NICER/wr140')
-    eventDF = nobs.get_eventsdf(flagtype='slow')
+    #eventDF = nobs.get_eventsdf(flagtype='slow')
+    bkspec = nobs.get_bkg_spectrum(gtinum=1)
+    pass
