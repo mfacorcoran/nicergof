@@ -419,7 +419,9 @@ class nicerObs(object):
         return specdict
 
 
-    def get_bkg_spectrum(self, chantype="PI", ModelType = "2A", tstart=None, tstop = None, gtinum=0,
+    def get_bkg_spectrum(self, chantype="PI", ModelType = "2A",
+                         tstart=None, tstop = None, gtinum=0,
+                         tbin=20,
                          bkg_lib_dir="/Volumes/SXDC/Google_Drive/David_Espinoza/nicer_bkg_model/bkg_library"):
         """
         This uses Ron Remillard's prescription for constructing a background spectrum based on
@@ -435,6 +437,7 @@ class nicerObs(object):
         :param tstart: start time to calculate background.  Generally (tstart, tstop) should delineate a single good time interval
         :param tstop: stop time to calculate background
         :param gtinum: if tstart or tstop not specified use the start, stop times for GTI number gtinum
+        :param tbin: bin time in seconds for rejected event lightcurve extraction
         :param bkg_lib_dir: directory path where the background library files are kept
         """
         slowevt = filter_flag(self.get_eventsdf(evttype='ufa'),flagtype='slow')
@@ -449,9 +452,17 @@ class nicerObs(object):
             tstop = gtidf['STOP'][gtinum]
         #slowevt = slowevt[(slowevt.TIME >= gtidf['START'][gtinum]) & (slowevt.TIME <= gtidf['STOP'][gtinum])]
         slowevt = slowevt[(slowevt.TIME >= tstart) & (slowevt.TIME <= tstop)]
-        # hatchet rejection
-        hrejevt = slowevt[(np.isnan(slowevt.PI_FAST)) | (slowevt.PI_RATIO < 1.4)]
-        hrejlc = self.get_lc(20, evtdf=hrejevt, chanmin=270, chanmax=1200)
+        # HATCHET REJECTION
+        #
+        # update from RR 20180426:
+        # There is an ERROR in the instructions in the OSWG slides to extract HREJ
+        # wrong:   fselect slow.evt.gz "(PI_RATIO < 1.54) || ISNULL(PI_FAST) > hrej.evt.gz
+        # correct:  fselect slow.evt.gz "PI_RATIO > 1.54)) > hrej.evt.gz
+        # .... the wrong syntax actually chooses hatchet-selected counts.  Thanks to Jeroen for pointing this out.
+        #
+        #hrejevt = slowevt[(np.isnan(slowevt.PI_FAST)) | (slowevt.PI_RATIO < 1.4)]
+        hrejevt = slowevt[slowevt.PI_RATIO < 1.4]
+        hrejlc = self.get_lc(tbin, evtdf=hrejevt, chanmin=270, chanmax=1200)
         hrej = (np.asarray(hrejlc[0]) / np.asarray(hrejlc[2])).mean()
         # Trumpet selection
         tselevt = slowevt[(np.isnan(slowevt.PI_RATIO)) | (slowevt.PI_RATIO < (1.1 + 120 / slowevt.PI))]
@@ -520,7 +531,7 @@ def filter_flag(eventDF, flagtype='slow'):
             'software':   (xxxxx1xx ==  4) software sample
             'fast':       (xxxx1000 ==  8) Valid fast trigger
             'slow':       (xxx1x000 == 16) Valid slow trigger
-            's+f':        (xxx1x000 == 24) valid fast+slow trigger event
+            's+f':        (xxx11000 == 24) valid fast+slow trigger event
             '1mpu':       (xx1xxxxx == 32) first event in MPU packet
 
     :return: returns the event dataframe including only the types of events specified
