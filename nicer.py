@@ -1,3 +1,6 @@
+__author__ = 'MFA Corcoran'
+__version__ = "0.1"
+
 import os
 import matplotlib as plt
 from astropy.table import Table
@@ -430,7 +433,7 @@ class nicerObs(object):
         and template spectra based on the BKG_RXTE fields (selected for a range of [IBG, HREJ])
         :return: a spectrum dictionary of the background spectrum.
         TODO: take into account any user-specified start/stop time, event flag selection, mpu selection (might need to create unmerged ufa files), detector selection
-        TODO: some issues to consider with bg calculation: should we restrict it to a single gti or allow the user to specify tstart, tstop (need to specify both tstart and tstop)
+        TODO: some issues to consider with bg calculation: should we restrict it to a single gti or allow the user to specify tstart, tstop (need to specify both tstart and tstop)?
 
         :param chantype: type of spectral channel to use for the spectrum
         :param ModelType: either 2A or 2B for Model2A or Model2B, respectively
