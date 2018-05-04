@@ -409,7 +409,7 @@ class nicerObs(object):
         # interpolate the effective area to chan_nrg scale
         effarea_interp = np.interp(chan_nrg, effarea.ENERG_LO, effarea.SPECRESP)
         # chanbins are the edges of the channel bins starting at 1
-        chanbins = np.arange(1, 1500, binning)
+        chanbins = np.arange(0, 1502, binning)
         if evttype=="cl":
             specpi, chans = np.histogram(evtDF[chantype], bins=chanbins)
         else:
@@ -993,6 +993,106 @@ def bgroup_lookup(IBG, HREJ, bkg_lib_dir='bkg_library', verbose=True, ModelType=
         # get exposure time for bg pha file
         exposure = fits.open(group_phafile)[1].header['EXPOSURE']
     return group_phafile, ibg, hrej, exposure
+
+
+def write_phafile(spectrum, outphafile, obsid, rootdir, Telescope = 'NICER', Instrument = 'XTI', Filter = '',
+              Chantype = 'PI',Observer='No Observer Specified', Title = 'No Title Specified',
+              TEMPLATEDIR = '/software/github/heasarc/utils/resources',
+              TEMPLATEFILE ='spectrum_template.pha'):
+    """
+    This routine creates a spectrum dictionary (from nobs.get_spectrum()) and writes an OGIP standard type-1 pha file in FITS format.
+    Requires a spectral binning = 1
+    Uses a template spectrum stored in the TEMPLATEFILE in TEMPLATEDIR
+    """
+    template = os.path.join(TEMPLATEDIR, TEMPLATEFILE)
+
+    hdu = fits.open(template)
+    nobs = nicerObs(obsid, rootdir=rootdir)
+    nobs.rmffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/nicer_v1.02.rmf'
+    nobs.arffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/ni_xrcall_onaxis_v1.02.arf'
+    gtidf = nobs.get_gti()
+    spechead = hdu['SPECTRUM'].header
+    gtihead = hdu['GTI'].header
+    ehdu = fits.open(nobs.get_eventfile())
+    phead = ehdu['PRIMARY'].header
+    ehead = ehdu['EVENTS'].header
+
+    hdu['PRIMARY'].header = phead
+    
+    hdu['SPECTRUM'].data['CHANNEL'] = spec['Channels']
+    hdu['SPECTRUM'].data['COUNTS'] = spec['Counts']
+
+    hdu['SPECTRUM'].header.remove('TIMEMETH')
+    hdu['SPECTRUM'].header.remove('TCALFILE')
+
+    hdu['SPECTRUM'].header['RESPFILE'] = os.path.split(nobs.rmffile)[-1]
+    hdu['SPECTRUM'].header['ANCRFILE'] = os.path.split(nobs.arffile)[-1]
+    hdu['SPECTRUM'].header['DETCHANS'] = len(spec['Channels'])
+    hdu['SPECTRUM'].header['DATE'] = Time.now().isot
+
+    hdu['SPECTRUM'].header['TLMIN1'] = min(spec['Channels'])
+    hdu['SPECTRUM'].header['TLMAX1'] = max(spec['Channels'])
+    hdu['SPECTRUM'].header['TELESCOP'] = Telescope
+    hdu['SPECTRUM'].header['INSTRUME'] = Instrument
+    hdu['SPECTRUM'].header['FILTER'] = Filter
+    hdu['SPECTRUM'].header['CHANTYPE'] = Chantype
+    hdu['SPECTRUM'].header['EXPOSURE'] = gtidf.Duration.sum()
+    hdu['SPECTRUM'].header['ONTIME'] = gtidf.Duration.sum()
+    hdu['SPECTRUM'].header['TARG_ID'] = obsid
+    hdu['SPECTRUM'].header['OBSERVER'] = Observer
+    hdu['SPECTRUM'].header['TITLE'] = Title
+    hdu['SPECTRUM'].header['OBS_ID'] = obsid
+
+    hdu['SPECTRUM'].header['AREASCAL'] = 1.0
+    hdu['SPECTRUM'].header['BACKFILE'] = ''
+    hdu['SPECTRUM'].header['BACKSCAL'] = 1.0
+    hdu['SPECTRUM'].header['CORRFILE'] = ''
+    hdu['SPECTRUM'].header['CORRSCAL'] = 1.0
+    hdu['SPECTRUM'].header['ORIGIN'] = 'make_spectrum()'
+    hdu['SPECTRUM'].header['CREATOR'] = 'make_spectrum()'
+    hdu['SPECTRUM'].header['CALDBVER'] = Caldb(telescope='nicer', instrument='xti').get_versions()[-1]
+    hdu['SPECTRUM'].header['OBJECT'] = ehead['OBJECT']
+    hdu['SPECTRUM'].header['EQUINOX'] = ehead['EQUINOX']
+    hdu['SPECTRUM'].header['RADECSYS'] = ehead['RADECSYS']
+    hdu['SPECTRUM'].header['RA_NOM'] = ehead['RA_NOM']
+    hdu['SPECTRUM'].header['DEC_NOM'] = ehead['DEC_NOM']
+    hdu['SPECTRUM'].header['RA_OBJ'] = ehead['RA_OBJ']
+    hdu['SPECTRUM'].header['DEC_OBJ'] = ehead['DEC_OBJ']
+    hdu['SPECTRUM'].header['TSTART'] = gtidf.START.min()
+    hdu['SPECTRUM'].header['TSTOP'] = gtidf.START.min()
+    hdu['SPECTRUM'].header['DATE-OBS'] = ehead['DATE-OBS']
+    hdu['SPECTRUM'].header['DATE-END'] = ehead['DATE-END']
+    hdu['SPECTRUM'].header['CLOCKAPP'] = ehead['CLOCKAPP']
+    hdu['SPECTRUM'].header['DEADAPP'] = ehead['DEADAPP']
+    hdu['SPECTRUM'].header['LEAPINIT'] = ehead['LEAPINIT']
+    hdu['SPECTRUM'].header['MPUTICKR'] = ehead['MPUTICKR']
+    hdu['SPECTRUM'].header['MPUTICKM'] = ehead['MPUTICKM']
+    hdu['SPECTRUM'].header['MPUTIMEM'] = ehead['MPUTIMEM']
+    hdu['SPECTRUM'].header['MPU_ID'] = ehead['MPU_ID']
+    hdu['SPECTRUM'].header['GAINAPP'] = ehead['GAINAPP']
+    hdu['SPECTRUM'].header['LONGSTRN'] = ehead['LONGSTRN']
+    hdu['SPECTRUM'].header['GAINMETH'] = ehead['GAINMETH']
+    hdu['SPECTRUM'].header['GCALFILE'] = ehead['GCALFILE']
+    hdu['SPECTRUM'].header['TELAPSE'] = ehead['TELAPSE']
+    hdu['SPECTRUM'].header['FILIN001'] = ehead['FILIN001']
+    hdu['SPECTRUM'].header['DETNAM'] = ''
+    hdu['SPECTRUM'].header['LIVETIME'] = gtidf.Duration.sum()
+    hdu['SPECTRUM'].header['MJD-OBS'] = Time(ehead['DATE-OBS']).mjd
+    hdu['SPECTRUM'].header['USER'] = ''
+    hdu['SPECTRUM'].header['NPIXSOU'] = 56
+    hdu['SPECTRUM'].header['HDUCLAS2'] = 'TOTAL'
+    hdu['SPECTRUM'].header['TOTCTS'] = spec['Counts'].sum()
+    hdu['SPECTRUM'].header['SPECDELT'] = 1
+    hdu['SPECTRUM'].header['SPECPIX'] = 0
+    hdu['SPECTRUM'].header['SPECVAL'] = 0.0
+
+    hdu['GTI'] = ehdu['GTI']
+
+    try:
+        hdu.writeto(outphafile)
+    except Exception, errmsg:
+        print("Problem writing {0} ({1})".format(outphafile,errmsg))
+    return
 
 
 ########################
