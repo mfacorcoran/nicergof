@@ -1,6 +1,7 @@
 # specific for this module
 kcg/
 testdata/
+bkg/README.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
