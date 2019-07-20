@@ -6,7 +6,7 @@ import os
 from astropy.table import Table, vstack, Column
 from astropy.io import fits
 from astropy.time import Time
-from nicer.bkg.bkg_estimator import add_kp
+from nicergof.bkg.bkg_estimator import add_kp
 import glob
 
 """
