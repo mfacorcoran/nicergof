@@ -1,3 +1,5 @@
+#TODO: add example for use on data which contains merged OBSIDS (cf. A. Lommen)
+
 This package contains functions which can be used to create an estimated NICER background spectrum based on the
 "environmental" model developed by the NICER Guest Observer Facility. The environmental model uses a combination of
 the cut-off rigidity (COR_SAX) and the Planetary K index (KP) which gives an estimate of the
