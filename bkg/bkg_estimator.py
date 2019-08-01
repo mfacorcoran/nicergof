@@ -112,7 +112,7 @@ def add_kp(mkffile, kpfile ='https://heasarc.gsfc.nasa.gov/FTP/caldb/data/gen/pc
 
 
 def mk_bkg_spec_evt(srcpha, mkf3file, bevt="https://heasarc.gsfc.nasa.gov/FTP/caldb/data/nicer/xti/pcf/30nov18targskc_enhanced.evt",
-                    numfpms = 50, gtimin=0, gti=None, clobber=True, verbose=True):
+                    numfpms = 50, writepha=True, gtimin=0, gti=None, clobber=True, verbose=True):
     """
     This routine creates a NICER instrumentental background spectrum from the NICER background event file (provided by K. Gendreau) for a specified extracted spectrum (containing source + background counts).  It does this by looking at the range of KP, SUN_ANGLE, COR_SAX for the observation, then creating histogram bins of these values, extracting events from the background event file which match the observed KP, SUN_ANGLE and COR_SAX bin range, and correcting the background exposure for dead time and amount of time the background observation was in that particular (KP, SUN_ANGLE, COR_SAX) bin, and finally correcting for the number of Focal Plane Modules (FPM) in use
 
@@ -132,9 +132,10 @@ def mk_bkg_spec_evt(srcpha, mkf3file, bevt="https://heasarc.gsfc.nasa.gov/FTP/ca
     bkgexpotot = fits.open(bevt)[1].header['EXPOSURE']
 
     if gti is None:
-        gti = fits.open(srcpha)['GTI'].data
-        gti = pd.DataFrame(gti)
-        gti['Duration'] = gti.STOP - gti.START
+        #gti = fits.open(srcpha)['GTI'].data
+        #gti = pd.DataFrame(gti)
+        gti = Table.read(srcpha, hdu='GTI')
+    gti['Duration'] = gti['STOP'] - gti['START']
 
     # GET THE MKF3 INFO FOR THIS OBSERVATIONS
     # mkf3 file from the observation
@@ -155,13 +156,13 @@ def mk_bkg_spec_evt(srcpha, mkf3file, bevt="https://heasarc.gsfc.nasa.gov/FTP/ca
 
     for gtinum in range(len(gti)):
         skipit = False
-        gdur = gti.iloc[gtinum].Duration
+        #gdur = gti.iloc[gtinum].Duration
+        #gdur = gti.iloc[gtinum]['STOP']-gti.iloc[gtinum]['START']
+        gdur = gti[gtinum]['Duration']
         print("\nFor GTI #{gn}; Duration = {d}\n".format(gn=gtinum, d=gdur))
         if gdur > gtimin:
-
-            t0s = gti.iloc[gtinum].START
-            t0e = gti.iloc[gtinum].STOP
-
+            t0s = gti[gtinum]['START']
+            t0e = gti[gtinum]['STOP']
             # it are the indices which select the specified good time interval
             it = np.where((mkftime >= t0s) & (mkftime <= t0e))[0]
             if it.size == 0:
@@ -169,7 +170,7 @@ def mk_bkg_spec_evt(srcpha, mkf3file, bevt="https://heasarc.gsfc.nasa.gov/FTP/ca
                 skipit = True
             if not skipit:
                 # now find time length of time that kp > kplo and kp < kphi
-                gtidur = gti.loc[gtinum].Duration
+                gtidur = gti[gtinum]['Duration']
 
                 # select parameter values (kp, cor, sa, dt) corresponding to the selected GTI
                 mkfkpgti = mkf3['PREFILTER'].data.KP[it]
@@ -403,19 +404,19 @@ def mk_bkg_spec_evt(srcpha, mkf3file, bevt="https://heasarc.gsfc.nasa.gov/FTP/ca
     # normalize to 50 FPMs
     bkgspec_tot = bkgspec_tot*numfpms/50
 
+    if writepha:
     #  Now write an xspec pha file of background
-    pha=fits.open(srcpha)
-    pha['SPECTRUM'].data['COUNTS'] = np.ceil(bkgspec_tot).astype(int)
-    pha['SPECTRUM'].header['EXPOSURE'] = btotexpo_kcsa
-    phaout = srcpha.replace('.pha','_bkg.pha')
-    if verbose:
-        print("\n Writing {po}".format(po=phaout))
-    try:
-        pha.writeto(phaout, output_verify='fix', checksum=True, overwrite=clobber)
-    except Exception as errmsg:
-        print("Could not write {out}".format(out=phaout))
-        print(errmsg)
-    #
+        pha=fits.open(srcpha)
+        pha['SPECTRUM'].data['COUNTS'] = np.ceil(bkgspec_tot).astype(int)
+        pha['SPECTRUM'].header['EXPOSURE'] = btotexpo_kcsa
+        phaout = srcpha.replace('.pha','_bkg.pha')
+        if verbose:
+            print("\n Writing {po}".format(po=phaout))
+        try:
+            pha.writeto(phaout, output_verify='fix', checksum=True, overwrite=clobber)
+        except Exception as errmsg:
+            print("Could not write {out}".format(out=phaout))
+            print(errmsg)
     print("Done")
     return bkg_chan[:-1], bkgspec_tot, btotexpo_kcsa
 
@@ -453,9 +454,15 @@ def pfilt_bkgevt(bevtfile, parname='KP', prange=[0,1], clobber=True, verbose=Fal
             totevents = len(evtf)
             if totevents > 0:
                 # if gtifilter returned events, then filter by parameter
-                evtfilt = evtf[(evtf[parname]>= pmin) & (evtf[parname]<pmax)]
+                try:
+                    evtfilt = evtf[(evtf[parname]>= pmin) & (evtf[parname]<pmax)]
+                except Exception as errmsg:
+                    print('Specified filter parameter {0} not in event file; returning'.format(errmsg))
+                    return
                 expo=len(evtfilt)/totevents*gdur
-                print('{prange}, {parname} between {pmin:.3f} and {pmax:.3f} Exposure = {expo}'.format(prange=prange, parname=parname, pmin=evtf[parname].min(), pmax=evtf[parname].max(), expo=expo) )
+                print('{prange}, {parname} between {pmin:.3f} and {pmax:.3f} Exposure = {expo}'.format(prange=prange,
+                                                                                                       parname=parname, pmin=evtf[parname].min(),
+                                                                                                       pmax=evtf[parname].max(), expo=expo) )
                 expotot.append(expo)
                 evtfilt_arr.append(evtf)
     evtpfilt = vstack(evtfilt_arr)
@@ -463,9 +470,50 @@ def pfilt_bkgevt(bevtfile, parname='KP', prange=[0,1], clobber=True, verbose=Fal
     evtpfilt.meta['EXPOSURE'] = expotot
     return evtpfilt
 
-def unit_test(pha='test.pha', obsid=1200040103,root='testdata',
+def mk_bkg_lc_evt(srclc, mkf3file,
+                  bevt = "https://heasarc.gsfc.nasa.gov/FTP/caldb/data/nicer/xti/pcf/30nov18targskc_enhanced.evt",
+                  verbose=True, clobber=True, chanrange=None):
+    tab = Table.read(srclc, hdu='RATE')
+    tab['START'] = tab['TIME'] + tab.meta['TIMEDEL'] * tab['FRACEXP'] * tab.meta['TIMEPIXR'] + tab.meta['TIMEZERO']
+    tab['STOP'] = tab['START'] + tab.meta['TIMEDEL'] * tab['FRACEXP']
+    tab['Duration']=tab['STOP']-tab['START']
+    bklctab = tab
+    if chanrange == None:
+        chanrange=[0,1500]
+    rate=[]
+    i=0
+    nrows = len(tab)
+    for r in tab:
+        # for each row in the lightcurve table generate a background spectrum
+        i+=1
+        print(f'gti {i} out of {nrows}')
+        gti = Table(r['START', 'STOP'])
+        bkg_chan, bkgspec_tot, btotexpo_kcsa = mk_bkg_spec_evt(srclc, mkf3file, bevt=bevt, writepha=False,
+                                                                numfpms = 50, gtimin=0, gti=gti, clobber=True,
+                                                                verbose=True)
+        # append calculated background rate to the rate list
+        rate.append(np.sum(bkgspec_tot[chanrange[0]:chanrange[1]])/btotexpo_kcsa)
+    bklctab['RATE']=rate
+    #  Now write a heasarc conventional RATE file
+    lc=fits.open(srclc)
+    lc['RATE'].data['RATE'] = rate
+    lc['RATE'].header['EXPOSURE'] = btotexpo_kcsa
+    lcout = srclc.replace('.lc','_bkg.lc')
+    if verbose:
+        print("\n Writing {po}".format(po=lcout))
+    #try:
+    lc.writeto(lcout, output_verify='fix', checksum=True, overwrite=clobber)
+    #except Exception as errmsg:
+    #    print("Could not write {out}".format(out=lcout))
+    #    print(errmsg)
+    print("Done")
+    return bklctab
+
+
+
+def unit_test(pha='test2.pha', lc='test2.lc',mkf2='test2.mkf2',root='testdata',
               kpfile = "https://heasarc.gsfc.nasa.gov/FTP/caldb/data/gen/pcf/kp.fits",
-              numfpms = 52,
+              numfpms = 52,verbose=True,
               bevt="https://heasarc.gsfc.nasa.gov/FTP/caldb/data/nicer/xti/pcf/30nov18targskc_enhanced.evt"):
     """
     The unit test will run a sample background calculation.  It assumes the data are located in a subdirectory called "testdata"
@@ -477,17 +525,60 @@ def unit_test(pha='test.pha', obsid=1200040103,root='testdata',
     :param bevt: the events file created from the NICER background (blank-sky) observations.
     :return:
     """
+    status=0
     srcpha = os.path.join(root,pha)
+    srclc = os.path.join(root, lc)
     # create mkf3 file from mkf2 file
-    mkf2  = os.path.join(root,str(obsid),'auxil','ni1200040103.mkf2')
+    mkf2  = os.path.join(root,mkf2)
     mkf3 = mkf2.replace('.mkf2','.mkf3')
     print('Making mkf3 file {0}'.format(mkf3))
     s = add_kp(mkf2, clobber=True, kpfile=kpfile)
     #bkg_chan, bkgspec_tot, bexpotot = mk_bkg_spec_evt(srcpha, gti=gtip, mkffile=mkf3, gtimin=0.1)
     print('Making Background Spectrum')
-    bkg_chan, bkgspec_tot, bexpotot = mk_bkg_spec_evt(srcpha, mkf3, bevt=bevt, numfpms = numfpms, gtimin=0, gti=None, clobber=True, verbose=False)
-    return bkg_chan, bkgspec_tot, bexpotot
+    try:
+        bkg_chan, bkgspec_tot, bexpotot = mk_bkg_spec_evt(srcpha, mkf3, bevt=bevt,
+                                                          numfpms = numfpms, gtimin=0, gti=None, clobber=True, verbose=verbose)
+    except Exception as emsg:
+        print('Could not create background spectrum (problem was {0})'.format(emsg))
+        status+=-1
+    stat = lc_test(lc='test2.lc',mkf3='test2.mkf3',root='testdata',
+              kpfile = "https://heasarc.gsfc.nasa.gov/FTP/caldb/data/gen/pcf/kp.fits",
+              numfpms = 52, verbose=True, clobber=True,
+              bevt=bevt)
+    return status
+
+def lc_test(lc='test2.lc',mkf3='test2.mkf3',root='testdata',
+              kpfile = "https://heasarc.gsfc.nasa.gov/FTP/caldb/data/gen/pcf/kp.fits",
+              numfpms = 52, verbose=True, clobber=True,
+              bevt="https://heasarc.gsfc.nasa.gov/FTP/caldb/data/nicer/xti/pcf/30nov18targskc_enhanced.evt"):
+    """
+    The unit test will run a sample background calculation.  It assumes the data are located in a subdirectory called "testdata"
+    of the current working directory
+    :param pha: the name of the pha file
+    :param obsid: the test nicer observation id for the dataset
+    :param root: the path to the testdata directory
+    :param kpfile: The file containing the space-weather KP parameters
+    :param bevt: the events file created from the NICER background (blank-sky) observations.
+    :return:
+    """
+    status=0
+    srclc = os.path.join(root, lc)
+    # # create mkf3 file from mkf2 file
+    # mkf2  = os.path.join(root,mkf2)
+    # mkf3 = mkf2.replace('.mkf2','.mkf3')
+    # print('Making mkf3 file {0}'.format(mkf3))
+    # s = add_kp(mkf2, clobber=True, kpfile=kpfile)
+    print('Making Background Lightcurve')
+    mkf3file = os.path.join(root, mkf3)
+    try:
+        mk_bkg_lc_evt(srclc, mkf3file, bevt=bevt, verbose=True, clobber=True, chanrange=None)
+    except Exception as emsg:
+        print('Could not create background lightcurve (problem was {0})'.format(emsg))
+        status=2
+    return status
+
 
 if __name__ == '__main__':
-    unit_test()
+    #unit_test()
+    lc_test()
 
