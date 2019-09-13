@@ -67,7 +67,7 @@ Assumptions:
 
         3) use the mk_bkg_spec_evt function to create the background spectrum:
 
-            >>> bkg_chan, bkgspectot, btotexpo = be.mk_bkg_spec_evt('testdata/test.pha', mkf3file='testdata/1200040103/auxil/ni1200040103.mkf')
+            >>> bkg_chan, bkgspectot, btotexpo = be.mk_bkg_spec_evt('testdata/test.pha', mkf3file='testdata/1200040103/auxil/ni1200040103.mkf3')
 
         This will create a HEASARC-compliant background PHA file (with .pha replaced by _bkg.pha, i.e.
         the background file for "./test.pha" is "./test_bkg.pha").  It will also return the background channels,
