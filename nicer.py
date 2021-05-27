@@ -7,17 +7,27 @@ from astropy.table import Table
 from astropy.io import fits
 from astropy.time import Time
 import glob
-from wurlitzer import sys_pipes
+try:
+    from wurlitzer import sys_pipes
+except Exception as e:
+    print("WARNING: could not import wurlitzer")
 import pandas as pd
 import numpy as np
 
+import sys
+if sys.version_info.major <= 2:
+    import xspec2 as xspec
+else:
+    import xspec
 
+def raw_input(x):
+    return input(x).strip()
 
 class nicerObs(object):
     """
     Defines a NICER observation Object
     """
-    def __init__(self, obsid, rootdir='.', rmffile = '', arffile = ''):
+    def __init__(self, obsid, rootdir='.', rmffile = '', arffile = '', evtfile='', mkffile=''):
         """
         get the directory structure for a nicer observation as attributes of the class assuming
         the NICER observations are sorted in directories by OBSID and that the
@@ -35,6 +45,7 @@ class nicerObs(object):
         :param rootdir: directory location of the OBSIDS
         :param rmffile: name of RMF files (str or list)
         :param arffile: name of ARF files for obsid (str or list)
+        :param evtfile: optional name of the events file to be used, with directory path
 
         """
         rootdir = rootdir.strip()
@@ -43,28 +54,26 @@ class nicerObs(object):
         else:
             obsid = obsid.strip()
         self.datadir = os.path.join(rootdir, obsid)
-        xtidir = os.path.join(self.datadir, 'xti')
+        instdir = os.path.join(self.datadir, 'xti')
         # Check that obsid directory exists
-        if not os.path.exists(xtidir):
-            print("{xtidir} Not Found; returning".format(xtidir=xtidir))
-            return None
-        self.xti = xtidir
+        if not os.path.exists(instdir):
+            print("Warning: {instdir} Not Found; returning".format(instdir=instdir))
+            #return None
+        self.instdir = instdir
         self.log = os.path.join(self.datadir, 'log')
         self.aux = os.path.join(self.datadir, 'auxil')
-        # TODO: ALLOW LIST OF OBSIDS (BETTER APPROACH: each nicerObs instance should refer to only one OBSID; multiple OBSIDS could be summarized as a list or dictionary of nicerObs instances)
-        # elif type(obsid)== list:
-        #     self.datadir = [os.path.join(rootdir, obs.strip()) for obs in obsid]
-        #     self.log = [os.path.join(datadir, 'log') for datadir in self.datadir]
-        #     self.aux = [os.path.join(datadir, 'auxil') for datadir in self.datadir]
-        #     self.xti = [os.path.join(datadir, 'xti') for datadir in self.datadir]
-        if type(rmffile) == str:
-            self.rmffile = rmffile
-        elif type(rmffile) == list:
-            self.rmffile = [r for r in rmffile]
-        if type(arffile) == str:
-            self.arffile = arffile
-        elif type(arffile) == list:
-            self.arffile = [a for a in arffile]
+        self.telescope = 'NICER'
+        self.instrument = 'XTI'
+        self.filter = ''
+        self.obsid=obsid
+        self.rmffile = rmffile
+        self.arffile = arffile
+        if evtfile:
+            self.evtfile = os.path.join(instdir,'event_cl',evtfile)
+        else:
+            self.evtfile=''
+        self.mkffile = mkffile
+        return
 
 
     def get_eventfile(self, evttype='cl', mpu=7, evtfile=None):
@@ -72,35 +81,38 @@ class nicerObs(object):
         return the name of the events file
         :param evttype: "cl" for cleaned events, "ufa" for unfiltered calibrated events, "uf" for unfiltered, uncalibrated events
         :param mpu: mpu should be an integer between 0-6 to specify an individual mpu or 7 for the merged data (default = 7)
+        :param evtfile: if specified use this event file in subsequent analysis rather than the "standard" event file in the xti directory
         :return: name of the event file
         """
-        if not evtfile:
+        if not self.evtfile:
             evttype = evttype.strip()
             if evttype == "cl":
-                evdir = os.path.join(self.xti,"event_cl")
+                evdir = os.path.join(self.instdir,"event_cl")
                 try:
                     evtfile = glob.glob(os.path.join(evdir,"*mpu{0}_cl.evt*".format(mpu)))[-1]
                 except:
-                    print "Did not find any cleaned event files in {0}".format(evdir)
+                    print("Did not find any cleaned event files in {0}".format(evdir))
                     evtfile = ''
                 return evtfile
             if evttype == "ufa":
-                evdir = os.path.join(self.xti,"event_cl")
+                evdir = os.path.join(self.instdir,"event_cl")
                 evtfile = glob.glob(os.path.join(evdir,"*mpu{0}_ufa.evt*".format(mpu)))[-1]
                 return evtfile
             if evttype == "uf":
-                evdir=os.path.join(self.xti,"event_uf")
+                evdir=os.path.join(self.instdir,"event_uf")
                 evtfile = glob.glob(os.path.join(evdir,"*uf.evt*"))
                 # return the unfiltered event file for the specified mpu
                 evtfile = [x for x in evtfile if 'mpu{0}'.format(mpu) in x]
                 try:
                     evtfile = evtfile[0]
                 except:
-                    print "Could not find UF events file for mpu {0}".format(mpu)
+                    print("Could not find UF events file for mpu {0}".format(mpu))
                     return ''
                 return evtfile
             else:
-                print "evttype must be either cl, ufa, or uf, not {0}".format(evttype)
+                print("evttype must be either cl, ufa, or uf, not {0}".format(evttype))
+        else:
+            return self.evtfile
 
 
     def get_eventsdf(self, evttype='cl', mpu=7, flagtype=None, chanmin=None, chanmax=None,
@@ -150,7 +162,7 @@ class nicerObs(object):
             try:
                 evtdf = evtdf[(evtdf.DET_ID==det_id)]
             except:
-                print "Problem getting Detector ID from events dataframe"
+                print("Problem getting Detector ID from events dataframe")
         return evtdf
 
 
@@ -158,12 +170,12 @@ class nicerObs(object):
         """
         gets the files in the products directory
         """
-        prodfiles = glob.glob("{0}/products/*.*".format(self.xti))
+        prodfiles = glob.glob("{0}/products/*.*".format(self.instdir))
         return prodfiles
 
 
     def get_hk(self):
-        hkfiles = glob.glob("{0}/hk/*.hk".format(self.xti))
+        hkfiles = glob.glob("{0}/hk/*.hk".format(self.instdir))
         return hkfiles
 
 
@@ -171,7 +183,13 @@ class nicerObs(object):
         """
         gets the gti for the cleaned events as a pandas dataframe
         """
-        hdu = fits.open(self.get_eventfile(evttype=evttype, mpu=mpu))
+        from astropy.time import Time
+        try:
+            hdu = fits.open(self.get_eventfile(evttype=evttype, mpu=mpu))
+        except Exception as errmsg:
+            print("Problem opening {0} ({1})".format(self.get_eventfile(evttype=evttype, mpu=mpu), errmsg))
+            print("Returning")
+            sys.exit(errmsg)
         gti = hdu['GTI'].data
         gti = Table(gti)
         gtidf = gti.to_pandas()
@@ -237,8 +255,8 @@ class nicerObs(object):
         ind = np.where(event_flags == eventflag)[0]
         try:
             times = times[ind]
-        except Exception, errmsg:
-            print "Problem in event flag filtering for event flag = {0}({1})".format(eventflag, errmsg)
+        except Exception as errmsg:
+            print("Problem in event flag filtering for event flag = {0}({1})".format(eventflag, errmsg))
             return
         return times
 
@@ -284,7 +302,7 @@ class nicerObs(object):
             try:
                 tsta = [tsta[gtinum]]
             except:
-                print "Can't retrieve start for GTI = {0}; returning".format(gtinum)
+                print("Can't retrieve start for GTI = {0}; returning".format(gtinum))
                 status = -1
                 return status
             tsto = [tsto[gtinum]]
@@ -294,12 +312,12 @@ class nicerObs(object):
             if len(time) > 0:
                 if nbins <= 0:
                     if verbose:
-                        print "Specified bin width {0} is greater than or equal to total duration of {1}; setting number of bins to 1".format(binwidth, tstop-tstart)
+                        print("Specified bin width {0} is greater than or equal to total duration of {1}; setting number of bins to 1".format(binwidth, tstop-tstart))
                     nbins = 1
                 try:
                     bcnts, bbins = np.histogram(time, nbins)
-                except ValueError, errmsg:
-                    print "get_lc: ERROR in creating histogram ({0}); nbins = {1} {2} {3}".format(errmsg, nbins, tstop-tstart, binwidth )
+                except ValueError as errmsg:
+                    print("get_lc: ERROR in creating histogram ({0}); nbins = {1} {2} {3}".format(errmsg, nbins, tstop-tstart, binwidth ))
                     return [-1,-1]
                 if nbins > 1:
                     bwidths =  bbins[1:] - bbins[:-1]
@@ -312,7 +330,12 @@ class nicerObs(object):
                 bincnts.extend(bcnts)
                 bincen.extend(bcen)
                 binwidths.extend(bwidths)
-        return np.asarray(bincnts), np.asarray(bincen), np.asarray(binwidths)
+        lc = dict()
+        lc['counts']= np.asarray(bincnts)
+        lc['time'] = np.asarray(bincen)
+        lc['timedel']=np.asarray(binwidths)
+        #return np.asarray(bincnts), np.asarray(bincen), np.asarray(binwidths)
+        return lc
 
     def fold(self,evttype, period, tstart=0.0, tstop=0.0, epoch=0.0, nbins=100, flagtype="slow", mpu=7):
         """
@@ -384,17 +407,24 @@ class nicerObs(object):
         # TODO: add good time intervals as Extension 2
         rmffile = self.rmffile
         if not os.path.isfile(rmffile):
-            print "nicerObs RMF file {0} should exist but doesn't; returning".format(rmffile)
+            print("nicerObs RMF file {0} should exist but doesn't; returning".format(rmffile))
             return
         arffile = self.arffile
         if not os.path.isfile(rmffile):
-            print "nicerObs ARF file {0} should exist but doesn't; returning".format(arffile)
+            print("nicerObs ARF file {0} should exist but doesn't; returning".format(arffile))
             return
         evtdf = self.get_eventsdf(evttype=evttype, mpu=mpu, flagtype=flagtype)
         if not tstart:
             tstart = min(evtdf.TIME)
         if not tstop:
             tstop = max(evtdf.TIME)
+        # accumulate data per gti and keep track of exposure
+        gti = self.get_gti()
+          # select gtis within the tstart-tstop window
+        sel = (gti['START'] <= tstop) & (gti['STOP'] >= tstart)
+
+
+        #for (tsta, tsto) in
         evtDF = evtdf[(evtdf.TIME >= tstart) & ((evtdf.TIME <= tstop))]
         #
         # get channels and energy boundaries from the rmf file
@@ -476,7 +506,7 @@ class nicerObs(object):
         else:
             IBG = tsel_rate.mean()
         # select bkg group file
-        bgtab, ibgtab, hrejtab,bgexpo = bgroup_lookup(IBG, hrej, bkg_lib_dir=bkg_lib_dir)
+        bgtab, ibgtab, hrejtab, bgexpo = bgroup_lookup(IBG, hrej, bkg_lib_dir=bkg_lib_dir)
         exposure = tstop - tstart
         scale = IBG / ibgtab * exposure / bgexpo
         hdu = fits.open(bgtab)
@@ -510,7 +540,7 @@ class nicerObs(object):
             counts_by_detector['Exposure'] = expo
             return counts_by_detector
         else:
-            print "Could not find event file for {0}".format(self.obsid)
+            print("Could not find event file for {0}".format(self.obsid))
             return -1
 
 
@@ -522,6 +552,25 @@ class nicerObs(object):
         """
         pass
 
+def get_detid_list(mpu=None):
+    """
+    returns a list of NICER detector IDs as zero-filled strings
+    :param mpu: returns detector ids for this mpu; if None, return all detector ids.  Should be an integer from 0-6
+    :return: string list of detector ids
+    """
+    if type(mpu) == int:
+        if  len(np.where(np.arange(7)==mpu)[0])== 0:
+            print(f'Specified MPU ({mpu}) must be between 0-6')
+            return None
+        print(mpu)
+        detids = [f'{mpu}{i}' for i in range(0,8)]
+        return detids
+    else:
+        detids=[]
+        for mpu in range(0,7):
+            d = [f'{mpu}{i}' for i in range(0,8)]
+            detids.extend(d)
+        return detids
 
 def filter_flag(eventDF, flagtype='slow'):
     """
@@ -653,7 +702,6 @@ def set_model():
     Creates an XSPEC model instance for a two component absorbed thermal model plus gaussian line
     :return:
     """
-    import xspec
     mo = xspec.Model("wabs*vapec + wabs*vapec + gaussian")
     mo.wabs.nH.values = [.1, 0.01, .05, .05, 100, 100]
     mo.vapec.kT.values = [3., 0.1, 1., 1., 9., 9.]
@@ -668,7 +716,7 @@ def set_model():
     return mo
 
 
-def get_obsDF(obsid, model, datadir='/Volumes/SXDC/Data/NICER/wr140', interval=None):
+def get_obsDF(obsid, model, evtfile='',datadir='/Volumes/SXDC/Data/NICER/wr140', interval=None):
     """
     Defines a pandas DataFrame summarizing the NICER observation id observation
     with blank spectrum parameters
@@ -681,7 +729,10 @@ def get_obsDF(obsid, model, datadir='/Volumes/SXDC/Data/NICER/wr140', interval=N
     """
     import pandas as pd
     obs = str(obsid)
-    f = os.path.join(datadir, obs, 'xti/event_cl/ni{0}_0mpu7_cl.evt'.format(obs))
+    if not evtfile:
+        f = os.path.join(datadir, obs, 'xti/event_cl/ni{0}_0mpu7_cl.evt'.format(obs))
+    else:
+        f = evtfile
     hdu = fits.open(f)
     tstart = Time(hdu[1].header['DATE-OBS'])
     JDstart = (tstart.jd)
@@ -694,16 +745,19 @@ def get_obsDF(obsid, model, datadir='/Volumes/SXDC/Data/NICER/wr140', interval=N
         nobsid = "{0}_{1}".format(obsid, interval)
     else:
         nobsid = "{0}".format(obsid)
-    nobsDict = {nobsid: {'JDSTART': JDstart, 'JDEND': JDend,
-                             'JDMID': JDmid,
-                             'EXPOSURE': Expos,
-                             'Num_GTI': numgtis,
-                             'Phase': np.nan,
-                             'FLUX': np.nan,
-                             'FluxBand': '',
-                             'Fit_Statistic': np.nan,
-                             'dof': np.nan
-                             }
+    nobsDict = {nobsid: {'JDSTART': JDstart,
+                         'JDEND': JDend,
+                         'JDMID': JDmid,
+                         'EXPOSURE': Expos,
+                         'Num_GTI': numgtis,
+                         'Phase': np.nan,
+                         'FLUX': np.nan,
+                         'FluxBand': '',
+                         'Fit_Statistic': np.nan,
+                         'dof': np.nan,
+                         'Rate':np.nan,
+                         'RateErr':np.nan,
+                         'NetRate':np.nan}
                 }
     # add in spectrum parameters
     for c in model.componentNames:
@@ -717,87 +771,136 @@ def get_obsDF(obsid, model, datadir='/Volumes/SXDC/Data/NICER/wr140', interval=N
     return nobsDF
 
 
-def get_obsid_specparams(obsid, model=None, get_errors = True,
-                         phaname=None,
+def get_obsid_specparams(obsid, model=None, get_errors = True, calc_errors=False,
+                         phaname='',
+                         backfile=None,
                          rmffile='/Users/corcoran/Dropbox/nicer_cal/nicer_v0.06.rmf',
                          arffile='/Users/corcoran/Dropbox/nicer_cal/ni_xrcall_onaxis_v0.06.arf',
                          workdir="/Users/corcoran/research/WR140/NICER/work/",
                          datadir="/Volumes/SXDC/Data/NICER/wr140",
+                         xspecdir='',
                          fluxband="2.0 10.0",
                          statMethod="cstat",
                          ignore = "0.0-0.45, 7.5.0-**",
                          interval=None,
-                         writexcm=True, xcmroot=None,
-                         chatter=False
-                         ):
+                         writexcm=True, xcmroot=None, clobber=False,
+                         chatter=False, dofit=True, verbose=False):
     """Get spectrum parameters from fit
-    gets the observation and spectrum parameters from the model fit
-    for the given obsid.
-
-    A NICER spectrum fit using the absorbed two-component thermal models
-    (defined in the model1 function) should have been done prior to running
-    this function.
+    This function gets the observation and spectrum parameters from a model fit
+    for the given obsid (and optionally the give interval for the obsid)
 
     :param obsid: nicer observation id (integer)
+    :param model: xspec model object to compare to/fit to spectrum
+    :param get_errors: if True gets the parameter errors (simple method) for non-frozen parameters
+    :param calc_errors: if True calculate errors for non-frozen parameters; if False, get parameter sigma as error
+    :param phaname: name of phafile (with directory path); will be constructed if not specified
+    :param evtfile: Name of NICER event file
     :param rmffile: nicer response file
     :param arffile: nicer effective area file
-    :param workdir: user-defined nicer work directory
-    :param datadir: user-defined directory holding nicer data
-    :param phaname: name of phafile (with directory path); will be constructed if not specified
+    :param workdir: user-defined nicer work directory for output
+    :param datadir: user-defined directory holding nicer input pha file
+    :param xspecdir: output directory where xspec command file (.xcm) is written
+    :param fluxband: band over which to calculate fluxes in keV
+    :param statMethod: statistic to use in fit ("chi", "cstat")
+    :param ignore: energy range in keV to ignore for fit
+    :param interval: if not None, append an "interval" number to the obsid; this is useful to divide an obsid spectrum by time
+    :param writexcm: if True, writes the xspec command file after fit to xspecdir
+    :param xcmroot: root name to use for xcm file (constructed if not specified)
+    :param clobber: if True overwrite xcm file when xcm file written
+    :param chatter: increase chattiness of output
+    :param dofit: if True, fit the model
+    :return: dataframe of the fit parameters
     """
-    import xspec
+    #import xspec
     from heasarc.utils import xspec_utils as xu
     if interval is None:
         obs = str(obsid)
     else:
         obs = "{0}_{1}".format(obsid, interval)
-
-    xspecdir = os.path.join(workdir, obs)
+    if not xspecdir:
+        xspecdir = os.path.join(workdir, obs)
     if not phaname:
         phaname = os.path.join(xspecdir, 'ni{0}_0mpu7_cl.pha'.format(obsid))
 
     xspec.AllData.clear()
 
     try:
+        if verbose:
+            print('Loading pha file {0}'.format(phaname))
         pha = xspec.Spectrum(phaname)
+        # don't forget to ignore bad channels
+        xspec.AllData.ignore('bad')
         skip_calc = False
-    except:
-        print "Can't get flux for {0}".format(obsid)
+        if backfile:
+            try:
+                pha.background = backfile
+            except Exception as e:
+                print("Can't find background file {0} ({1})".format(backfile, e))
+    except Exception as errmsg:
+        print("Problem analyzing {0} ({1})".format(phaname,errmsg))
         flux = np.nan
         skip_calc = True
         nobsDF = ''
     if not skip_calc:
+        if verbose:
+            print('Getting RMF')
         pha.response = rmffile
-        pha.response.arf = arffile
+        if verbose:
+            print('Setting ARF')
+        if arffile is not None:
+            pha.response.arf = arffile
         pha.ignore(ignore)
         #
         # read base model
         #
         if not model:
+            if verbose:
+                print('Getting Model')
             modelname = os.path.join(xspecdir, 'ni{0}_0mpu7_cl_mo.xcm'.format(obsid))
             print("Reading {0}".format(modelname))
             model = xu.read_model_xcm(modelname, chatter=chatter)
+        if xspec.Fit.dof < 1:
+            print('Number of degrees of < 1: Cannot perform fit')
+            status = -1
+            return status
+        if dofit:
+            xspec.Fit.statMethod = statMethod
+            if verbose:
+                print('Fitting')
+            try:
+                xspec.Fit.perform()
+            except Exception:
+                print("Can't perform fit for {0}; returning".format(obsid))
+                return ''
+            if writexcm:
+                if not xcmroot:
+                    xcmroot = os.path.join(workdir, str(obsid), phaname.replace('.pha',''))
+                xu.write_xcm(xcmroot, pha, model=model, clobber=clobber)
 
-        xspec.Fit.statMethod = statMethod
-        xspec.Fit.perform()
-        if writexcm:
-            if not xcmroot:
-                xcmroot = os.path.join(workdir, str(obsid), phaname.replace('.pha',''))
-            xu.write_xcm(xcmroot, pha, model=model)
-
+        if verbose:
+            print('Calculating fluxes')
         xspec.AllModels.calcFlux(fluxband)
 
         flux = pha.flux[0]
-        print "{0}    flux = {1:.3e} {2}".format(obsid, flux, fluxband)
-        modict = xu.get_mo_params(model, chatter=chatter)
+        print("{0}    flux = {1:.3e} {2}".format(obsid, flux, fluxband))
+        modict = xu.get_mo_params(model, verbose=verbose)
 
-        nobsDF = get_obsDF(obsid, model, datadir=datadir, interval=interval)
+        nobsDF = get_obsDF(obsid, model, datadir=datadir, interval=interval, evtfile=phaname)
 
         # update JDSTART, JDEND, JDMID using GTI info from pha file
 
         hdu = fits.open(phaname)
-        gti = list(hdu['GTI'].data)
-        mjdoff = hdu['GTI'].header['MJDREFI'] + hdu['GTI'].header['MJDREFF']
+        gtiname = 'GTI'
+        try:
+            gti = list(hdu[gtiname].data)
+        except KeyError:
+            # use STDGTI extension (RXTE data uses this)
+            gtiname = 'STDGTI'
+            gti = list(hdu[gtiname].data)
+        try:
+            mjdoff = hdu[gtiname].header['MJDREFI'] + hdu[gtiname].header['MJDREFF']
+        except KeyError:
+            mjdoff = hdu[gtiname].header['MJDREF']
         gtimjd = [[x / 86400.0 + mjdoff, y / 86400. + mjdoff, y-x] for x, y in gti]
         # print gtimjd
         gtijd = [[Time(x, format='mjd').jd, Time(y, format='mjd').jd, z] for x, y, z in gtimjd]
@@ -805,6 +908,7 @@ def get_obsid_specparams(obsid, model=None, get_errors = True,
         # jdstart, jdend requires gtijd array to be time ordered
         jdstart = gtijd[0][0]
         jdend = gtijd[-1][1]
+
         nobsDF[obs]['JDSTART'] = jdstart
         nobsDF[obs]['JDEND'] = jdend
         nobsDF[obs]['JDMID'] = (jdend-jdstart)/2.0 + jdstart
@@ -817,6 +921,9 @@ def get_obsid_specparams(obsid, model=None, get_errors = True,
         nobsDF[obs]['FluxBand'] = fluxband
         nobsDF[obs]['Fit_Statistic'] = xspec.Fit.statistic
         nobsDF[obs]['dof'] = xspec.Fit.dof
+        nobsDF[obs]['Rate'] = pha.rate[2]
+        nobsDF[obs]['RateErr'] = pha.rate[1]
+        nobsDF[obs]['NetRate'] = pha.rate[0]
 
         # get non-frozen model parameter values
         for c in model.componentNames:
@@ -826,7 +933,13 @@ def get_obsid_specparams(obsid, model=None, get_errors = True,
                     nobsDF[obs]["{c}_{p}".format(c=c, p=p)] = modict[c][p][0]
                     if get_errors:
                         # return parameter's Sigma by accessing the component/parameter dictionary
-                        nobsDF[obs]["{c}_{p}_err".format(c=c, p=p)] = model.__getattribute__(c).__getattribute__(p).sigma
+                        if calc_errors:
+                            xspec.Fit.error("2.706 {0}".format(model.__getattribute__(c).__getattribute__(p).index))
+                            lobnd = model.__getattribute__(c).__getattribute__(p).error[0]
+                            hibnd = model.__getattribute__(c).__getattribute__(p).error[1]
+                            nobsDF[obs]["{c}_{p}_err".format(c=c, p=p)] = (hibnd-lobnd)/2.0
+                        else:
+                            nobsDF[obs]["{c}_{p}_err".format(c=c, p=p)] = model.__getattribute__(c).__getattribute__(p).sigma
     return nobsDF
 
 
@@ -837,7 +950,7 @@ def concat_nobsDF(nobsDFlist):
     get_obsid_specparams or get_obsDF)
     """
     import pandas as pd
-    nobsDFconcat = pd.concat(nobsDFlist, axis=1)
+    nobsDFconcat = pd.concat(nobsDFlist, axis=1, sort=True)
     return nobsDFconcat
 
 
@@ -858,7 +971,7 @@ def set_xspec(obsid, model = None,
     :param showmodel: if True print the model parameters
     :return:
     """
-    import xspec
+    #import xspec
     import matplotlib as plt
     obs = str(obsid)
 
@@ -867,12 +980,12 @@ def set_xspec(obsid, model = None,
 
     xspecdir = os.path.join(workdir, obs)
     phaname = os.path.join(xspecdir, 'ni{obs}_0mpu7_cl.pha'.format(obs=obsid))
-    print "phaname = {phaname}".format(phaname=phaname)
+    print("phaname = {phaname}".format(phaname=phaname))
 
     try:
         pha = xspec.Spectrum(phaname)
     except:
-        print "Can't find {phaname}; returning".format(phaname=phaname)
+        print("Can't find {phaname}; returning".format(phaname=phaname))
         return 0, 0
     pha.response = rmffile
     pha.response.arf = arffile
@@ -907,7 +1020,7 @@ def fit_spectrum(obsid, pha, model, writexcm=True,
                  workdir='/Users/corcoran/research/WR140/NICER/work/',
                  statMethod='cstat'
                  ):
-    import xspec
+    #import xspec
     from wurlitzer import sys_pipes
     import pylab as plt
     from heasarc.utils import xspec_utils as xu
@@ -936,12 +1049,12 @@ def fit_spectrum(obsid, pha, model, writexcm=True,
         plt.step(xspec.Plot.x(), xspec.Plot.model(), where="mid")
         band = "0.5-10 keV"
         xspec.AllModels.calcFlux(band.replace(' keV', '').replace('-',' '))
-        print "Flux is {0:.3e} in the  {1} band".format(pha.flux[0], band)
+        print("Flux is {0:.3e} in the  {1} band".format(pha.flux[0], band))
         if writexcm:
             xcmfile = os.path.join(workdir, str(obsid), 'ni{obsid}_0mpu7_cl'.format(obsid=obsid))
             xu.write_xcm(xcmfile, pha, model=model)
     else:
-        print "Can't fit OBSID {obs}".format(obs=obsid)
+        print("Can't fit OBSID {obs}".format(obs=obsid))
     return pha, model
 
 
@@ -959,14 +1072,14 @@ def bgroup_lookup(IBG, HREJ, bkg_lib_dir='bkg_library', verbose=True, ModelType=
         bgtable = os.path.join(bkg_lib_dir, 'bg_groups.table')
         try:
             bgtable = pd.read_csv(bgtable, names=('bg_group', 'IBG', 'HREJ'), sep ='\s+')
-        except IOError, errmsg:
-            print "Problem reading {0} ({1}); Returning".format(bgtable, errmsg)
+        except IOError as errmsg:
+            print("Problem reading {0} ({1}); Returning".format(bgtable, errmsg))
             return
         bglookupfile = os.path.join(bkg_lib_dir, 'bkg_library_bounds.xlsx')
         try:
             bglookup = pd.read_excel(bglookupfile)
-        except IOError, errmsg:
-            print "Problem reading {0} ({1}); Returning".format(bglookup, errmsg)
+        except IOError as errmsg:
+            print("Problem reading {0} ({1}); Returning".format(bglookup, errmsg))
             return
         ibgDF = bglookup[(IBG >= bglookup.IBGmin) & (IBG < bglookup.IBGmax)]
         group = ibgDF[(HREJ >= ibgDF.HREJmin) & (HREJ < ibgDF.HREJmax)]['Group'].iloc[0]
@@ -995,21 +1108,39 @@ def bgroup_lookup(IBG, HREJ, bkg_lib_dir='bkg_library', verbose=True, ModelType=
     return group_phafile, ibg, hrej, exposure
 
 
-def write_phafile(spectrum, outphafile, obsid, rootdir, Telescope = 'NICER', Instrument = 'XTI', Filter = '',
-              Chantype = 'PI',Observer='No Observer Specified', Title = 'No Title Specified',
-              TEMPLATEDIR = '/software/github/heasarc/utils/resources',
-              TEMPLATEFILE ='spectrum_template.pha'):
+def write_phafile(nobs, spectrum, outphafile,
+                  Chantype = 'PI',Observer='No Observer Specified', Title = 'No Title Specified',
+                  caldbver = '', overwrite=False,
+                  TEMPLATEDIR = '/software/github/heasarc/utils/resources',
+                  TEMPLATEFILE ='spectrum_template.pha',
+                  rmffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/nicer_v1.02.rmf',
+                  arffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/ni_xrcall_onaxis_v1.02.arf'):
     """
-    This routine creates a spectrum dictionary (from nobs.get_spectrum()) and writes an OGIP standard type-1 pha file in FITS format.
+        This routine creates a spectrum dictionary (from nobs.get_spectrum()) and writes an OGIP standard type-1 pha file in FITS format.
     Requires a spectral binning = 1
     Uses a template spectrum stored in the TEMPLATEFILE in TEMPLATEDIR
+
+
+    :param nobs: instance of a nicer observation object
+    :param spectrum: a dictionary with keys = ['Energy', 'Binning', 'Channels', 'TSTART', 'TSTOP', 'Counts'] with binning = 1
+    :param outphafile: name of output file (with directory path)
+    :param obsid: obsid number
+    :param rootdir: root directory holding the obsid data
+    :param Telescope: name of telescope
+    :param Instrument: name of instrument
+    :param Filter: name of filter
+    :param Chantype: 'PI' or 'PHA'
+    :param Observer: Name of observer
+    :param Title: title of program
+    :param TEMPLATEDIR: directory holding the template pha file
+    :param TEMPLATEFILE: name of the template pha file
+    :return:
     """
+    from heasarc.pycaldb.pycaldb import Caldb
+
     template = os.path.join(TEMPLATEDIR, TEMPLATEFILE)
 
     hdu = fits.open(template)
-    nobs = nicerObs(obsid, rootdir=rootdir)
-    nobs.rmffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/nicer_v1.02.rmf'
-    nobs.arffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/ni_xrcall_onaxis_v1.02.arf'
     gtidf = nobs.get_gti()
     spechead = hdu['SPECTRUM'].header
     gtihead = hdu['GTI'].header
@@ -1018,39 +1149,39 @@ def write_phafile(spectrum, outphafile, obsid, rootdir, Telescope = 'NICER', Ins
     ehead = ehdu['EVENTS'].header
 
     hdu['PRIMARY'].header = phead
-    
-    hdu['SPECTRUM'].data['CHANNEL'] = spec['Channels']
-    hdu['SPECTRUM'].data['COUNTS'] = spec['Counts']
+
+    hdu['SPECTRUM'].data['CHANNEL'] = spectrum['Channels']
+    hdu['SPECTRUM'].data['COUNTS'] = spectrum['Counts']
 
     hdu['SPECTRUM'].header.remove('TIMEMETH')
     hdu['SPECTRUM'].header.remove('TCALFILE')
 
     hdu['SPECTRUM'].header['RESPFILE'] = os.path.split(nobs.rmffile)[-1]
     hdu['SPECTRUM'].header['ANCRFILE'] = os.path.split(nobs.arffile)[-1]
-    hdu['SPECTRUM'].header['DETCHANS'] = len(spec['Channels'])
+    hdu['SPECTRUM'].header['DETCHANS'] = len(spectrum['Channels'])
     hdu['SPECTRUM'].header['DATE'] = Time.now().isot
 
-    hdu['SPECTRUM'].header['TLMIN1'] = min(spec['Channels'])
-    hdu['SPECTRUM'].header['TLMAX1'] = max(spec['Channels'])
-    hdu['SPECTRUM'].header['TELESCOP'] = Telescope
-    hdu['SPECTRUM'].header['INSTRUME'] = Instrument
-    hdu['SPECTRUM'].header['FILTER'] = Filter
+    hdu['SPECTRUM'].header['TLMIN1'] = min(spectrum['Channels'])
+    hdu['SPECTRUM'].header['TLMAX1'] = max(spectrum['Channels'])
+    hdu['SPECTRUM'].header['TELESCOP'] = nobs.telescope
+    hdu['SPECTRUM'].header['INSTRUME'] = nobs.instrument
+    hdu['SPECTRUM'].header['FILTER'] = nobs.filter
     hdu['SPECTRUM'].header['CHANTYPE'] = Chantype
     hdu['SPECTRUM'].header['EXPOSURE'] = gtidf.Duration.sum()
     hdu['SPECTRUM'].header['ONTIME'] = gtidf.Duration.sum()
-    hdu['SPECTRUM'].header['TARG_ID'] = obsid
+    hdu['SPECTRUM'].header['TARG_ID'] = nobs.obsid
     hdu['SPECTRUM'].header['OBSERVER'] = Observer
     hdu['SPECTRUM'].header['TITLE'] = Title
-    hdu['SPECTRUM'].header['OBS_ID'] = obsid
+    hdu['SPECTRUM'].header['OBS_ID'] = nobs.obsid
 
     hdu['SPECTRUM'].header['AREASCAL'] = 1.0
     hdu['SPECTRUM'].header['BACKFILE'] = ''
     hdu['SPECTRUM'].header['BACKSCAL'] = 1.0
     hdu['SPECTRUM'].header['CORRFILE'] = ''
     hdu['SPECTRUM'].header['CORRSCAL'] = 1.0
-    hdu['SPECTRUM'].header['ORIGIN'] = 'make_spectrum()'
-    hdu['SPECTRUM'].header['CREATOR'] = 'make_spectrum()'
-    hdu['SPECTRUM'].header['CALDBVER'] = Caldb(telescope='nicer', instrument='xti').get_versions()[-1]
+    hdu['SPECTRUM'].header['ORIGIN'] = 'make_spectrumtrum()'
+    hdu['SPECTRUM'].header['CREATOR'] = 'make_spectrumtrum()'
+    hdu['SPECTRUM'].header['CALDBVER'] = caldbver
     hdu['SPECTRUM'].header['OBJECT'] = ehead['OBJECT']
     hdu['SPECTRUM'].header['EQUINOX'] = ehead['EQUINOX']
     hdu['SPECTRUM'].header['RADECSYS'] = ehead['RADECSYS']
@@ -1058,8 +1189,8 @@ def write_phafile(spectrum, outphafile, obsid, rootdir, Telescope = 'NICER', Ins
     hdu['SPECTRUM'].header['DEC_NOM'] = ehead['DEC_NOM']
     hdu['SPECTRUM'].header['RA_OBJ'] = ehead['RA_OBJ']
     hdu['SPECTRUM'].header['DEC_OBJ'] = ehead['DEC_OBJ']
-    hdu['SPECTRUM'].header['TSTART'] = gtidf.START.min()
-    hdu['SPECTRUM'].header['TSTOP'] = gtidf.START.min()
+    hdu['SPECTRUM'].header['TSTART'] = spectrum['TSTART']
+    hdu['SPECTRUM'].header['TSTOP'] = spectrum['TSTOP']
     hdu['SPECTRUM'].header['DATE-OBS'] = ehead['DATE-OBS']
     hdu['SPECTRUM'].header['DATE-END'] = ehead['DATE-END']
     hdu['SPECTRUM'].header['CLOCKAPP'] = ehead['CLOCKAPP']
@@ -1081,7 +1212,7 @@ def write_phafile(spectrum, outphafile, obsid, rootdir, Telescope = 'NICER', Ins
     hdu['SPECTRUM'].header['USER'] = ''
     hdu['SPECTRUM'].header['NPIXSOU'] = 56
     hdu['SPECTRUM'].header['HDUCLAS2'] = 'TOTAL'
-    hdu['SPECTRUM'].header['TOTCTS'] = spec['Counts'].sum()
+    hdu['SPECTRUM'].header['TOTCTS'] = spectrum['Counts'].sum()
     hdu['SPECTRUM'].header['SPECDELT'] = 1
     hdu['SPECTRUM'].header['SPECPIX'] = 0
     hdu['SPECTRUM'].header['SPECVAL'] = 0.0
@@ -1089,9 +1220,11 @@ def write_phafile(spectrum, outphafile, obsid, rootdir, Telescope = 'NICER', Ins
     hdu['GTI'] = ehdu['GTI']
 
     try:
-        hdu.writeto(outphafile)
-    except Exception, errmsg:
+        hdu.writeto(outphafile, overwrite=overwrite)
+    except Exception as errmsg:
         print("Problem writing {0} ({1})".format(outphafile,errmsg))
+        return
+    print("Wrote {0}".format(outphafile))
     return
 
 
@@ -1100,24 +1233,26 @@ def write_phafile(spectrum, outphafile, obsid, rootdir, Telescope = 'NICER', Ins
 ########################
 
 def test_filter_flag():
-    print Time.now()
+    print(Time.now())
     efile = '/Volumes/SXDC/Data/NICER/wr140/1120010113/xti/event_cl/ni1120010113_0mpu7_cl.evt.gz'
     em = filter_flag(efile)
     print("total number of events             = {em}".format(em=len(em)))
     ind = np.where(np.asarray(em) == True)[0]
     print("number of events which pass filter = {iem}".format(iem=len(ind)))
-    print Time.now()
+    print(Time.now())
     return
 
 def test_get_specparams_obsid():
-    datadir = '/Volumes/SXDC/Data/NICER/etacar'
-    workdir = "/Users/corcoran/research/ETA_CAR/NICER/work/"
+    datadir = '/Volumes/SXDC/Data/NICER/wr140'
+    workdir = "/Users/corcoran/program/missions/NICER:OSWG/wr140/work"
+    o = 1120010113
 
-    rmffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_v0.06.rmf'
-    arffile = '/Users/corcoran/Dropbox/nicer_cal/ni_xrcall_onaxis_v0.06.arf'
+    phaname = '/Users/corcoran/research/WR140/NICER/work/1120010113/ni1120010113_0mpu7_cl_bin20.pha'
+    rmffile = ' /Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/nicer_v1.02.rmf'
+    arffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/ni_xrcall_onaxis_v1.02.arf'
 
     nobsDF = get_obsid_specparams(o, workdir=workdir, datadir=datadir,
-                                 get_errors = True)
+                                 get_errors = True, verbose=True, phaname=phaname)
 
 def test_lc_detid(det_id):
     """
@@ -1188,7 +1323,12 @@ if __name__ == '__main__':
     ##### test_filter_flag()
     #test_lc_detid(10)
 
-    nobs = nicerObs('1120010136', rootdir='/Volumes/SXDC/Data/NICER/wr140')
+    # nobs = nicerObs('1120010136', rootdir='/Volumes/SXDC/Data/NICER/wr140')
+    # nobs.rmffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/nicer_v1.02.rmf'
+    # nobs.arffile = '/Users/corcoran/Dropbox/nicer_cal/nicer_resp_ver1.02/ni_xrcall_onaxis_v1.02.arf'
     #eventDF = nobs.get_eventsdf(flagtype='slow')
-    bkspec = nobs.get_bkg_spectrum(gtinum=1)
-    pass
+    #bkspec = nobs.get_bkg_spectrum(gtinum=1)
+    #write_phafile(nobs, nobs.get_spectrum(), '/Volumes/SXDC/tmp/test_phafile.pha', overwrite=True)
+    #write_phafile(nobs, nobs.get_bkg_spectrum(), '/Volumes/SXDC/tmp/test_phafile_bkg.pha', overwrite=True)
+
+    test_get_specparams_obsid() 
