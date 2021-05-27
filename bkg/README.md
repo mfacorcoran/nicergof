@@ -1,5 +1,3 @@
-#TODO: add example for use on data which contains merged OBSIDS (cf. A. Lommen)
-
 This package contains functions which can be used to create an estimated NICER background spectrum based on the
 "environmental" model developed by the NICER Guest Observer Facility. The environmental model uses a combination of
 the cut-off rigidity (COR_SAX) and the Planetary K index (KP) which gives an estimate of the
@@ -19,21 +17,31 @@ directory from the relevant observation) .
 
 
 INSTALLATION:
-    * Download the bkg_estimator.tar file
-    * Untar it in and place the nicergof directory in your $PYTHONPATH
-    * Import it  as
-            >>> from nicergof.bkg import bkg_estimator as bk
-    * There are command line executables, niaddkp and nibkgestimator, which are located in the nicergof/bkg/bin
-    directory. You can make an estimated background using these executables from the command line
-    by putting them in one of your $PATH directories and making sure that you have execute privilege:
-        % chmod u+x nibkgestimator
 
+1. Download the bkg_estimator.tar file
+2. Untar it in and place the nicergof directory in your $PYTHONPATH
+3. Import it  as
+
+    `from nicergof.bkg import bkg_estimator as be`
+     
+COMMAND LINE EXECUTABLES:
+
+There are command line executables, `niaddkp` and `nibkgestimator`, which are located in the nicergof/bkg/bin
+    directory. You can make an estimated background using these executables from the command line
+    by putting them in one of your `$PATH` directories and making sure that you have execute privilege:
+
+`% chmod u+x nibkgestimator`
+
+REQUIRED FILES
 
 This background creation method uses two files:
-    a) The background events file 30nov18targskc_enhanced.evt
-    (current version: https://heasarc.gsfc.nasa.gov/FTP/caldb/data/nicer/xti/pcf/30nov18targskc_enhanced.evt)
-    b) the KP.fits file
-    (the current version, updated daily, is at https://heasarc.gsfc.nasa.gov/FTP/caldb/data/gen/pcf/kp.fits)
+* The background events file 30nov18targskc_enhanced.evt
+    current version: https://heasarc.gsfc.nasa.gov/FTP/caldb/data/nicer/xti/pcf/30nov18targskc_enhanced.evt
+    
+    (Note that the background estimator will run more quickly if you download 
+    this file and use the local version in the background estimation)
+* the KP.fits file
+    the current version, updated daily, is at https://heasarc.gsfc.nasa.gov/FTP/caldb/data/gen/pcf/geomag/kp_potsdam.fits)
 
 You can access these files virtually by specifying the URLs given above (the default for the functions defined below)
 or you can download them to a local directory for faster access.
@@ -49,7 +57,7 @@ Assumptions:
         you can create a nicer background
 
         a) create the mkf3 file:
-            % niaddkp testdata/1200040103/auxil/ni1200040103.mkf2
+            % niaddkp testdata/1200040103/auxil/ni1200040103.mkf
 
         b) create the background spectrum:
             % nibkgestimator testdata/test.pha testdata/1200040103/auxil/ni1200040103.mkf3
@@ -85,5 +93,12 @@ CAVEATS:
     * there may be other parameters that are important in determining background, or other parameters which give a better estimate of the background.  This is still under investigation.
     * there are undoubtedly other issues.
 
+Version History:
 
-Please send any usage issues or problems with the backgrounds produced to nicerhelp@bigbang.gsfc.nasa.gov
+    0.2 - Original Release
+    0.3 - convert KP file TIME column (in MJD) to MET using nicertimeconv (Mar 12 2020 MFC)
+    0.4 - fixed calculation of exposure time to address issues from DR and DE (Mar 25 2020 MFC)
+    0.5 - Fixed bug in deadtime correction & updated all EXPOSURE keywords
+
+Please send any usage issues or problems with the backgrounds produced to 
+[nicerhelp@bigbang.gsfc.nasa.gov](mailto:nicerhelp@bigbang.gsfc.nasa.gov)

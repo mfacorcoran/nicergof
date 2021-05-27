@@ -26,9 +26,9 @@ def find_bkg_data(obsfile = 'BKGD_RXTE_obsids.txt', nicer_archive='/FTP/nicer/da
     scans the NICER archive and generates a list of background event files
     for the BKGD_RXTEn fields
     
-    :param obsfile: ascii file that contains the list of unique obsid identifiers for the BKGD_RXTEn fields;
+    :parameter obsfile: ascii file that contains the list of unique obsid identifiers for the BKGD_RXTEn fields;
     should be pipe-delimited and have columns which include the Field name and OBSID, with no header line
-    :param nicer_archive: location of the NICER data archive
+    :parameter nicer_archive: location of the NICER data archive
     """
     # get list of arhive directories
     #dirs = Popen('ls -d {0}/20*'.format(nicer_archive), stdout=PIPE, shell=True, universal_newlines=True).communicate()[0].split()
@@ -61,11 +61,11 @@ def mk_evtbk_table(bevtfile,outfile='compose', indir=None,scratchdir='/tmp',
     create a table with additional information from the mkf file (including KP) 
     then stack the event tables and sort them by time
     
-    :param bevtfile: FITS background event file
-    :param outfile: name of output "enhanced" background FITS file with additional info from mkf3 file included; if None, don't write output file; if "compose" create background file with standard name in scratchdir
-    :param indir: location of background event files; if None, use the NICER archive
-    :param scratchdir: location of temporary and output file
-    :param kp: name of the FITS file containing the KP solar activity data
+    :parameter bevtfile: FITS background event file
+    :parameter outfile: name of output "enhanced" background FITS file with additional info from mkf3 file included; if None, don't write output file; if "compose" create background file with standard name in scratchdir
+    :parameter indir: location of background event files; if None, use the NICER archive
+    :parameter scratchdir: location of temporary and output file
+    :parameter kp: name of the FITS file containing the KP solar activity data
     :return: combined events table
     
     """
@@ -110,6 +110,10 @@ def mk_evtbk_table(bevtfile,outfile='compose', indir=None,scratchdir='/tmp',
         if not skip:
             newcol = Column(name=m,data=coli)
             evtab.add_column(newcol)
+    # convert COR_SAX, KP, SUN_ANGLE, MPU_DEADTIME from 64bit to 32 bits
+    f32cols = ['COR_SAX', 'KP', 'SUN_ANGLE','MPU_DEADTIME']
+    for f in f32cols:
+        evtab[f]=np.float32(evtab[f])
     if outfile:
         if outfile == 'compose':
             outfile = os.path.split(mkf3)[-1].replace('.mkf3','_enhanced.evt')
@@ -139,8 +143,8 @@ def combine_bevts(bevtlist, outfile='compose', scratchdir='/tmp'):
         - create an hdu from the Column objects using fits.BinTableHDU.from_columns()
         - create an HDULIST with the merged event tables and the good time intervals, then write out
         
-    :param evtlist: a list of the names of the enhanced bkg evt files
-    :param outfile: name of the output file (with path)
+    :parameter evtlist: a list of the names of the enhanced bkg evt files
+    :parameter outfile: name of the output file (with path)
     
     :return: a 0 status if all went ok, non-zero otherwise
     
@@ -280,8 +284,8 @@ def rem_bevt_keys(evtab):
 def mk_fits_table(tablist,outfile, clobber=True):
     """
     From a list of astropy tables, create a FITS file with the tables as bintable extensions
-    :param tablist: list of astropy tables
-    :param outfile: name of output fits file
+    :parameter tablist: list of astropy tables
+    :parameter outfile: name of output fits file
     """
     stat=0
     hdulist=[fits.PrimaryHDU()]
@@ -297,7 +301,7 @@ def mk_fits_table(tablist,outfile, clobber=True):
     return stat
 
 if __name__ == '__main__':
-    bevtfile = glob.glob("/Volumes/SXDC/Data/NICER/kp_model/20181130/work/ni*")
+    bevtfile = glob.glob("/Users/mcorcora/SXDC/Data/NICER/kp_model/20181130/work/ni*")
     print(bevtfile)
     for bf in bevtfile:
         evtPF = pfilt_bkgevt(bf, parname='KP', prange=[0,2], clobber=True)

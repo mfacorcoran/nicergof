@@ -15,8 +15,8 @@ import pandas as pd
 import numpy as np
 
 import sys
-if sys.version_info.major >= 3:
-    import xspec3 as xspec
+if sys.version_info.major <= 2:
+    import xspec2 as xspec
 else:
     import xspec
 
@@ -68,7 +68,10 @@ class nicerObs(object):
         self.obsid=obsid
         self.rmffile = rmffile
         self.arffile = arffile
-        self.evtfile = evtfile
+        if evtfile:
+            self.evtfile = os.path.join(instdir,'event_cl',evtfile)
+        else:
+            self.evtfile=''
         self.mkffile = mkffile
         return
 
@@ -180,6 +183,7 @@ class nicerObs(object):
         """
         gets the gti for the cleaned events as a pandas dataframe
         """
+        from astropy.time import Time
         try:
             hdu = fits.open(self.get_eventfile(evttype=evttype, mpu=mpu))
         except Exception as errmsg:
@@ -548,6 +552,25 @@ class nicerObs(object):
         """
         pass
 
+def get_detid_list(mpu=None):
+    """
+    returns a list of NICER detector IDs as zero-filled strings
+    :param mpu: returns detector ids for this mpu; if None, return all detector ids.  Should be an integer from 0-6
+    :return: string list of detector ids
+    """
+    if type(mpu) == int:
+        if  len(np.where(np.arange(7)==mpu)[0])== 0:
+            print(f'Specified MPU ({mpu}) must be between 0-6')
+            return None
+        print(mpu)
+        detids = [f'{mpu}{i}' for i in range(0,8)]
+        return detids
+    else:
+        detids=[]
+        for mpu in range(0,7):
+            d = [f'{mpu}{i}' for i in range(0,8)]
+            detids.extend(d)
+        return detids
 
 def filter_flag(eventDF, flagtype='slow'):
     """
@@ -750,7 +773,6 @@ def get_obsDF(obsid, model, evtfile='',datadir='/Volumes/SXDC/Data/NICER/wr140',
 
 def get_obsid_specparams(obsid, model=None, get_errors = True, calc_errors=False,
                          phaname='',
-                         evtfile='',
                          backfile=None,
                          rmffile='/Users/corcoran/Dropbox/nicer_cal/nicer_v0.06.rmf',
                          arffile='/Users/corcoran/Dropbox/nicer_cal/ni_xrcall_onaxis_v0.06.arf',
@@ -787,7 +809,7 @@ def get_obsid_specparams(obsid, model=None, get_errors = True, calc_errors=False
     :param clobber: if True overwrite xcm file when xcm file written
     :param chatter: increase chattiness of output
     :param dofit: if True, fit the model
-    :return:
+    :return: dataframe of the fit parameters
     """
     #import xspec
     from heasarc.utils import xspec_utils as xu
@@ -806,31 +828,45 @@ def get_obsid_specparams(obsid, model=None, get_errors = True, calc_errors=False
         if verbose:
             print('Loading pha file {0}'.format(phaname))
         pha = xspec.Spectrum(phaname)
+        # don't forget to ignore bad channels
+        xspec.AllData.ignore('bad')
         skip_calc = False
         if backfile:
             try:
                 pha.background = backfile
-            except:
-                print("Can't find background file {0}".format(backfile))
-    except:
-        print("Can't get flux for {0}".format(obsid))
+            except Exception as e:
+                print("Can't find background file {0} ({1})".format(backfile, e))
+    except Exception as errmsg:
+        print("Problem analyzing {0} ({1})".format(phaname,errmsg))
         flux = np.nan
         skip_calc = True
         nobsDF = ''
     if not skip_calc:
+        if verbose:
+            print('Getting RMF')
         pha.response = rmffile
-        pha.response.arf = arffile
+        if verbose:
+            print('Setting ARF')
+        if arffile is not None:
+            pha.response.arf = arffile
         pha.ignore(ignore)
         #
         # read base model
         #
         if not model:
+            if verbose:
+                print('Getting Model')
             modelname = os.path.join(xspecdir, 'ni{0}_0mpu7_cl_mo.xcm'.format(obsid))
             print("Reading {0}".format(modelname))
             model = xu.read_model_xcm(modelname, chatter=chatter)
-
+        if xspec.Fit.dof < 1:
+            print('Number of degrees of < 1: Cannot perform fit')
+            status = -1
+            return status
         if dofit:
             xspec.Fit.statMethod = statMethod
+            if verbose:
+                print('Fitting')
             try:
                 xspec.Fit.perform()
             except Exception:
@@ -841,22 +877,30 @@ def get_obsid_specparams(obsid, model=None, get_errors = True, calc_errors=False
                     xcmroot = os.path.join(workdir, str(obsid), phaname.replace('.pha',''))
                 xu.write_xcm(xcmroot, pha, model=model, clobber=clobber)
 
+        if verbose:
+            print('Calculating fluxes')
         xspec.AllModels.calcFlux(fluxband)
 
         flux = pha.flux[0]
         print("{0}    flux = {1:.3e} {2}".format(obsid, flux, fluxband))
-        modict = xu.get_mo_params(model, chatter=chatter)
+        modict = xu.get_mo_params(model, verbose=verbose)
 
-        nobsDF = get_obsDF(obsid, model, datadir=datadir, interval=interval, evtfile=evtfile)
+        nobsDF = get_obsDF(obsid, model, datadir=datadir, interval=interval, evtfile=phaname)
 
         # update JDSTART, JDEND, JDMID using GTI info from pha file
 
         hdu = fits.open(phaname)
-        gti = list(hdu['GTI'].data)
+        gtiname = 'GTI'
         try:
-            mjdoff = hdu['GTI'].header['MJDREFI'] + hdu['GTI'].header['MJDREFF']
+            gti = list(hdu[gtiname].data)
         except KeyError:
-            mjdoff = hdu['GTI'].header['MJDREF']
+            # use STDGTI extension (RXTE data uses this)
+            gtiname = 'STDGTI'
+            gti = list(hdu[gtiname].data)
+        try:
+            mjdoff = hdu[gtiname].header['MJDREFI'] + hdu[gtiname].header['MJDREFF']
+        except KeyError:
+            mjdoff = hdu[gtiname].header['MJDREF']
         gtimjd = [[x / 86400.0 + mjdoff, y / 86400. + mjdoff, y-x] for x, y in gti]
         # print gtimjd
         gtijd = [[Time(x, format='mjd').jd, Time(y, format='mjd').jd, z] for x, y, z in gtimjd]
@@ -864,6 +908,7 @@ def get_obsid_specparams(obsid, model=None, get_errors = True, calc_errors=False
         # jdstart, jdend requires gtijd array to be time ordered
         jdstart = gtijd[0][0]
         jdend = gtijd[-1][1]
+
         nobsDF[obs]['JDSTART'] = jdstart
         nobsDF[obs]['JDEND'] = jdend
         nobsDF[obs]['JDMID'] = (jdend-jdstart)/2.0 + jdstart

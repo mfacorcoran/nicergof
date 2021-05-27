@@ -1,3 +1,8 @@
+__name__    = 'nicertimeconv'
+__author__  = 'Mike Corcoran'
+__version__ = '1.00'
+
+
 def nicertimeconv(time, informat='met', outformat='mjd', outscale='utc',
                   LEAPINIT=2, TIMEZERO = 0, MJDREFI = 56658.0,
                   MJDREFF =  0.000777592592592593):
@@ -23,9 +28,9 @@ def nicertimeconv(time, informat='met', outformat='mjd', outscale='utc',
         MJD(UTC) = (MJDREFI) + (TIMEZERO+TIME+LEAPINIT=2)/86400
 
 
-    :param time: input time (string or float)
-    :param informat: format for input time
-    :param outformat: output format for time
+    :parameter time: input time (string or float)
+    :parameter informat: format for input time
+    :parameter outformat: output format for time
     :return:
     """
     from astropy.time import Time
